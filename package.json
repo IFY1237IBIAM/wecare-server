@@ -1,0 +1,31 @@
+{
+  "name": "wecare-server",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "expo": "^54.0.27",
+    "expo-linking": "~8.0.10",
+    "express": "^4.22.1",
+    "express-mongo-sanitize": "^2.2.0",
+    "express-rate-limit": "^6.11.2",
+    "git": "^0.1.5",
+    "helmet": "^6.2.0",
+    "joi": "^17.13.3",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^7.8.8",
+    "nodemailer": "^6.10.1",
+    "postmark": "^4.0.5",
+    "validator": "^13.9.0",
+    "xss-clean": "^0.1.4"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.11"
+  }
+}
