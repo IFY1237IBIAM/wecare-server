@@ -29,6 +29,7 @@ const signinSchema = Joi.object({
 const appLoginUrl = "wecare://login";
 
 // --- SIGNUP ---
+// --- SIGNUP ---
 router.post("/signup", async (req, res) => {
   try {
     const { error, value } = signupSchema.validate(req.body);
@@ -38,12 +39,11 @@ router.post("/signup", async (req, res) => {
     const existing = await User.findOne({ email });
     if (existing) return res.status(400).json({ message: "Account already exists" });
 
-    const passwordHash = await bcrypt.hash(password, 10);
     const verificationToken = crypto.randomBytes(32).toString("hex");
 
     const user = new User({
       email,
-      password: passwordHash,
+      password, // store plain, pre-save hook hashes it
       displayName: displayName || undefined,
       pseudonym: generatePseudonym(),
       verificationToken,
@@ -75,48 +75,64 @@ router.post("/signup", async (req, res) => {
   }
 });
 
+
+// --- SIGNIN ---
 // --- SIGNIN ---
 router.post("/signin", async (req, res) => {
   try {
+    console.log("---- SIGNIN ATTEMPT ----");
+    console.log("Incoming body:", req.body);
+
     const { error, value } = signinSchema.validate(req.body);
-    if (error) return res.status(400).json({ message: error.details[0].message });
+    if (error) {
+      console.log("Validation error:", error.details[0].message);
+      return res.status(400).json({ message: error.details[0].message });
+    }
 
     const { email, password } = value;
-    const user = await User.findOne({ email });
-    if (!user) return res.status(400).json({ message: "Invalid email or password" });
-    if (!user.isVerified) return res.status(400).json({ message: "Please verify your email before signing in" });
+    console.log("Looking for user with email:", email);
 
+    const user = await User.findOne({ email });
+    console.log("User found:", user);
+
+    if (!user) {
+      console.log("ERROR: No user found with that email");
+      return res.status(400).json({ message: "Invalid email or password" });
+    }
+
+    console.log("User verified status:", user.isVerified);
+    if (!user.isVerified) {
+      console.log("ERROR: User email not verified");
+      return res.status(400).json({ message: "Please verify your email before signing in" });
+    }
+
+    console.log("Comparing password...");
     const match = await bcrypt.compare(password, user.password);
-    if (!match) return res.status(400).json({ message: "Invalid email or password" });
+    console.log("Password match result:", match);
+
+    if (!match) {
+      console.log("ERROR: Password mismatch");
+      console.log("Entered password:", password);
+      console.log("Stored hash:", user.password);
+      return res.status(400).json({ message: "Invalid email or password" });
+    }
+
+    console.log("SUCCESS: User authenticated");
 
     const token = createToken(user);
     res.json({
       token,
-      user: { id: user._id, email: user.email, displayName: user.displayName, pseudonym: user.pseudonym },
+      user: {
+        id: user._id,
+        email: user.email,
+        displayName: user.displayName,
+        pseudonym: user.pseudonym
+      },
     });
+
   } catch (err) {
     console.error("Signin error", err);
     res.status(500).json({ message: "Server error" });
-  }
-});
-
-// --- VERIFY EMAIL ---
-router.get("/verify-email", async (req, res) => {
-  try {
-    const { token, email } = req.query;
-    if (!token || !email) return res.status(400).send("Invalid verification link");
-
-    const user = await User.findOne({ email, verificationToken: token });
-    if (!user) return res.status(400).send("Invalid or expired verification token");
-
-    user.isVerified = true;
-    user.verificationToken = undefined;
-    await user.save();
-
-    res.redirect(appLoginUrl);
-  } catch (err) {
-    console.error("Email verification error", err);
-    res.status(500).send("Server error");
   }
 });
 
