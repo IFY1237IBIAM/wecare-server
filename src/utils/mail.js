@@ -1,7 +1,7 @@
 import nodemailer from "nodemailer";
 
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,  // NOT EMAIL_HOST
+  host: process.env.SMTP_HOST,
   port: process.env.SMTP_PORT,
   secure: false,
   auth: {
@@ -15,7 +15,7 @@ const SERVER_URL = process.env.SERVER_URL;
 export const sendMail = async ({ to, subject, html }) => {
   try {
     await transporter.sendMail({
-      from: process.env.EMAIL_FROM, // WeCare <wecare.sending@gmail.com>
+      from: process.env.EMAIL_FROM,
       to,
       subject,
       html,
