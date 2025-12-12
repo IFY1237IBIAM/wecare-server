@@ -1,17 +1,25 @@
 import nodemailer from "nodemailer";
 
 const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST,
-  port: process.env.EMAIL_PORT,
+  host: process.env.SMTP_HOST,  // NOT EMAIL_HOST
+  port: process.env.SMTP_PORT,
   secure: false,
-  auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
 });
 
 const SERVER_URL = process.env.SERVER_URL;
 
 export const sendMail = async ({ to, subject, html }) => {
   try {
-    await transporter.sendMail({ from: `"WeCare" <${process.env.EMAIL_USER}>`, to, subject, html });
+    await transporter.sendMail({
+      from: process.env.EMAIL_FROM, // WeCare <wecare.sending@gmail.com>
+      to,
+      subject,
+      html,
+    });
     console.log(`Email sent to ${to}`);
   } catch (err) {
     console.error("Error sending email:", err);
