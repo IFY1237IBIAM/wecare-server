@@ -17,7 +17,12 @@ export const authMiddleware = async (req, res, next) => {
     if (!user)
       return res.status(401).json({ message: "User not found" });
 
-    req.user = { id: user._id.toString(), email: user.email };
+    // Add pseudonym here
+    req.user = { 
+      id: user._id.toString(), 
+      email: user.email, 
+      pseudonym: user.pseudonym || 'Anonymous' 
+    };
     next();
   } catch (err) {
     console.error("AUTH ERROR:", err);
