@@ -1,29 +1,24 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
-const commentSchema = new mongoose.Schema({
-  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  userName: { type: String },
-  text: String,
-  createdAt: { type: Date, default: Date.now },
+const mediaSchema = new mongoose.Schema({
+  url: String,
+  type: String, // image | video
 });
 
 const postSchema = new mongoose.Schema(
   {
-    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    pseudonym: { type: String },
-    content: { type: String, maxlength: 500 },
-    image: { type: String }, // url of image/video
-    mediaType: { type: String }, // image/video
-    likes: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    pseudonym: String,
+    content: String,
+    media: [mediaSchema],
     reactions: { type: Map, of: Number },
-    userReactions: { type: Map, of: Boolean },
-    comments: [commentSchema],
-    readBy: [String], // pseudonyms of users who read
+    comments: Array,
+    readBy: [String],
     type: String,
     mood: String,
-    anonymous: { type: Boolean, default: true },
+    anonymous: Boolean,
   },
   { timestamps: true }
 );
 
-export default mongoose.model('Post', postSchema);
+export default mongoose.model("Post", postSchema);
