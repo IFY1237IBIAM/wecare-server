@@ -25,7 +25,7 @@ app.use(limiter);
 connectDB();
 
 // Serve uploaded files
-app.use("/uploads", express.static("uploads"));
+app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
 
 app.use('/api/auth', authRoutes);
