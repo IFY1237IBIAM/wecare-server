@@ -26,27 +26,15 @@ const upload = multer({ storage });
 
 /* ---------- CREATE POST ---------- */
 router.post("/", authMiddleware, upload.array("file", 5), async (req, res) => {
-  const parsedBody = {
-    ...req.body,
-    anonymous: req.body.anonymous === "true" || req.body.anonymous === true,
-  };
-
-  const schema = Joi.object({
-    content: Joi.string().max(500).allow(""),
-    anonymous: Joi.boolean(),
-  });
-
-  const { error, value } = schema.validate(parsedBody);
-  if (error) return res.status(400).json({ message: error.message });
-
   try {
     const post = new Post({
       user: req.user.id,
-      pseudonym: value.anonymous ? "Anonymous" : req.user.pseudonym,
-      content: value.content,
-      anonymous: value.anonymous,
+      pseudonym: req.body.anonymous === "true" ? "Anonymous" : req.user.pseudonym,
+      content: req.body.content || "",
+      anonymous: req.body.anonymous === "true",
       media: [],
       reactions: {},
+      userReactions: {},
       comments: [],
       readBy: [],
     });
@@ -74,42 +62,64 @@ router.get("/", async (_, res) => {
   res.json(posts);
 });
 
-/* ---------- MARK AS READ ---------- */
-router.post("/:id/read", authMiddleware, async (req, res) => {
-  const post = await Post.findById(req.params.id);
-  if (!post) return res.sendStatus(404);
-
-  if (!post.readBy.includes(req.user.pseudonym)) {
-    post.readBy.push(req.user.pseudonym);
-    await post.save();
-  }
-
-  res.json({ readBy: post.readBy });
-});
-
-/* ---------- REACT ---------- */
+/* ---------- REACT / UNREACT / SWITCH ---------- */
 router.post("/:id/react", authMiddleware, async (req, res) => {
-  const { reaction } = req.body;
-  const post = await Post.findById(req.params.id);
-  if (!post) return res.sendStatus(404);
+  try {
+    const { reaction } = req.body;
+    const userId = req.user.id;
 
-  post.reactions.set(
-    reaction,
-    (post.reactions.get(reaction) || 0) + 1
-  );
+    const post = await Post.findById(req.params.id);
+    if (!post) return res.sendStatus(404);
 
-  await post.save();
-  res.json(post.reactions);
+    const previousReaction = post.userReactions.get(userId);
+
+    // UN-REACT
+    if (!reaction) {
+      if (previousReaction) {
+        post.reactions.set(
+          previousReaction,
+          Math.max((post.reactions.get(previousReaction) || 1) - 1, 0)
+        );
+        post.userReactions.delete(userId);
+      }
+    }
+    // SWITCH OR NEW REACTION
+    else {
+      if (previousReaction && previousReaction !== reaction) {
+        post.reactions.set(
+          previousReaction,
+          Math.max((post.reactions.get(previousReaction) || 1) - 1, 0)
+        );
+      }
+
+      if (!previousReaction || previousReaction !== reaction) {
+        post.reactions.set(
+          reaction,
+          (post.reactions.get(reaction) || 0) + 1
+        );
+        post.userReactions.set(userId, reaction);
+      }
+    }
+
+    await post.save();
+
+    res.json({
+      reactions: Object.fromEntries(post.reactions),
+      userReaction: post.userReactions.get(userId) || null,
+    });
+  } catch (err) {
+    console.error("REACTION ERROR:", err);
+    res.status(500).json({ message: "Server error" });
+  }
 });
 
 /* ---------- COMMENT ---------- */
 router.post("/:id/comment", authMiddleware, async (req, res) => {
-  const { text } = req.body;
   const post = await Post.findById(req.params.id);
   if (!post) return res.sendStatus(404);
 
   post.comments.push({
-    text,
+    text: req.body.text,
     userName: req.user.pseudonym,
     createdAt: new Date(),
   });

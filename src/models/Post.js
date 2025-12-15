@@ -11,7 +11,21 @@ const postSchema = new mongoose.Schema(
     pseudonym: String,
     content: String,
     media: [mediaSchema],
-    reactions: { type: Map, of: Number },
+
+    // reactionKey -> count
+    reactions: {
+      type: Map,
+      of: Number,
+      default: {},
+    },
+
+    // userId -> reactionKey
+    userReactions: {
+      type: Map,
+      of: String,
+      default: {},
+    },
+
     comments: Array,
     readBy: [String],
     type: String,
