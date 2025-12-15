@@ -8,79 +8,114 @@ import { authMiddleware } from "../middleware/auth.js";
 
 const router = express.Router();
 
-// Ensure uploads folder exists
+/* ---------- UPLOAD SETUP ---------- */
 const UPLOADS_FOLDER = path.join(process.cwd(), "uploads");
 if (!fs.existsSync(UPLOADS_FOLDER)) {
   fs.mkdirSync(UPLOADS_FOLDER, { recursive: true });
 }
 
-// Multer storage config
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, UPLOADS_FOLDER),
-  filename: (req, file, cb) => {
+  destination: (_, __, cb) => cb(null, UPLOADS_FOLDER),
+  filename: (_, file, cb) => {
     const ext = path.extname(file.originalname);
-    cb(null, Date.now() + "-" + Math.random().toString(36).substring(2, 8) + ext);
+    cb(null, Date.now() + "-" + Math.random().toString(36).slice(2) + ext);
   },
 });
 
 const upload = multer({ storage });
 
-// CREATE POST ROUTE
+/* ---------- CREATE POST ---------- */
 router.post("/", authMiddleware, upload.array("file", 5), async (req, res) => {
-  // Convert string booleans to actual booleans
   const parsedBody = {
     ...req.body,
     anonymous: req.body.anonymous === "true" || req.body.anonymous === true,
   };
 
-  // Validate post data
   const schema = Joi.object({
     content: Joi.string().max(500).allow(""),
-    type: Joi.string().allow(""),
-    mood: Joi.string().allow(""),
     anonymous: Joi.boolean(),
   });
 
   const { error, value } = schema.validate(parsedBody);
-  if (error) return res.status(400).json({ message: error.details[0].message });
+  if (error) return res.status(400).json({ message: error.message });
 
   try {
     const post = new Post({
       user: req.user.id,
-      pseudonym: req.user.pseudonym || "Anonymous",
+      pseudonym: value.anonymous ? "Anonymous" : req.user.pseudonym,
       content: value.content,
-      type: value.type || "",
-      mood: value.mood || "",
       anonymous: value.anonymous,
       media: [],
+      reactions: {},
+      comments: [],
+      readBy: [],
     });
 
-    if (req.files && req.files.length > 0) {
+    if (req.files) {
       req.files.forEach((file) => {
         post.media.push({
           url: `${process.env.SERVER_URL}/uploads/${file.filename}`,
-          type: file.mimetype.includes("video") ? "video" : "image",
+          type: file.mimetype.startsWith("video") ? "video" : "image",
         });
       });
     }
 
     await post.save();
-    return res.status(201).json(post);
+    res.status(201).json(post);
   } catch (err) {
     console.error("CREATE POST ERROR:", err);
-    return res.status(500).json({ message: "Server error" });
+    res.status(500).json({ message: "Server error" });
   }
 });
 
-// GET ALL POSTS
-router.get("/", async (req, res) => {
-  try {
-    const posts = await Post.find().sort({ createdAt: -1 });
-    res.json(posts);
-  } catch (err) {
-    console.error("FETCH POSTS ERROR:", err);
-    res.status(500).json({ message: "Server error" });
+/* ---------- GET POSTS ---------- */
+router.get("/", async (_, res) => {
+  const posts = await Post.find().sort({ createdAt: -1 });
+  res.json(posts);
+});
+
+/* ---------- MARK AS READ ---------- */
+router.post("/:id/read", authMiddleware, async (req, res) => {
+  const post = await Post.findById(req.params.id);
+  if (!post) return res.sendStatus(404);
+
+  if (!post.readBy.includes(req.user.pseudonym)) {
+    post.readBy.push(req.user.pseudonym);
+    await post.save();
   }
+
+  res.json({ readBy: post.readBy });
+});
+
+/* ---------- REACT ---------- */
+router.post("/:id/react", authMiddleware, async (req, res) => {
+  const { reaction } = req.body;
+  const post = await Post.findById(req.params.id);
+  if (!post) return res.sendStatus(404);
+
+  post.reactions.set(
+    reaction,
+    (post.reactions.get(reaction) || 0) + 1
+  );
+
+  await post.save();
+  res.json(post.reactions);
+});
+
+/* ---------- COMMENT ---------- */
+router.post("/:id/comment", authMiddleware, async (req, res) => {
+  const { text } = req.body;
+  const post = await Post.findById(req.params.id);
+  if (!post) return res.sendStatus(404);
+
+  post.comments.push({
+    text,
+    userName: req.user.pseudonym,
+    createdAt: new Date(),
+  });
+
+  await post.save();
+  res.json(post.comments);
 });
 
 export default router;
