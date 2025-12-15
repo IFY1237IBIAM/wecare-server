@@ -15,9 +15,14 @@ const postSchema = new mongoose.Schema(
     // reactionKey -> count
     reactions: {
       type: Map,
-      of: Number,
-      default: {},
+      of: [
+        {
+          userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+          reaction: String,
+        },
+      ],
     },
+
 
     // userId -> reactionKey
     userReactions: {

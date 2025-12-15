@@ -63,55 +63,45 @@ router.get("/", async (_, res) => {
 });
 
 /* ---------- REACT / UNREACT / SWITCH ---------- */
+/* ---------- REACT (REAL-TIME SAFE) ---------- */
 router.post("/:id/react", authMiddleware, async (req, res) => {
-  try {
-    const { reaction } = req.body;
-    const userId = req.user.id;
+  const { reaction } = req.body;
+  const userId = req.user.id;
 
-    const post = await Post.findById(req.params.id);
-    if (!post) return res.sendStatus(404);
+  const post = await Post.findById(req.params.id);
+  if (!post) return res.sendStatus(404);
 
-    const previousReaction = post.userReactions.get(userId);
-
-    // UN-REACT
-    if (!reaction) {
-      if (previousReaction) {
-        post.reactions.set(
-          previousReaction,
-          Math.max((post.reactions.get(previousReaction) || 1) - 1, 0)
-        );
-        post.userReactions.delete(userId);
-      }
-    }
-    // SWITCH OR NEW REACTION
-    else {
-      if (previousReaction && previousReaction !== reaction) {
-        post.reactions.set(
-          previousReaction,
-          Math.max((post.reactions.get(previousReaction) || 1) - 1, 0)
-        );
-      }
-
-      if (!previousReaction || previousReaction !== reaction) {
-        post.reactions.set(
-          reaction,
-          (post.reactions.get(reaction) || 0) + 1
-        );
-        post.userReactions.set(userId, reaction);
-      }
-    }
-
-    await post.save();
-
-    res.json({
-      reactions: Object.fromEntries(post.reactions),
-      userReaction: post.userReactions.get(userId) || null,
-    });
-  } catch (err) {
-    console.error("REACTION ERROR:", err);
-    res.status(500).json({ message: "Server error" });
+  // Remove previous reaction from user
+  for (const [key, users] of post.reactions.entries()) {
+    post.reactions.set(
+      key,
+      users.filter((u) => u.userId.toString() !== userId)
+    );
   }
+
+  // If reaction is not null → add new
+  if (reaction) {
+    const users = post.reactions.get(reaction) || [];
+    users.push({ userId, reaction });
+    post.reactions.set(reaction, users);
+  }
+
+  await post.save();
+
+  // 🔥 EMIT REAL-TIME UPDATE
+  const io = req.app.get("io");
+  io.emit("reaction:update", {
+    postId: post._id,
+    reactions: post.reactions,
+  });
+
+  res.json({
+    postId: post._id,
+    reactions: post.reactions,
+    userReaction: reaction,
+  });
 });
+
 
 /* ---------- COMMENT ---------- */
 router.post("/:id/comment", authMiddleware, async (req, res) => {
