@@ -32,8 +32,8 @@ router.post("/", authMiddleware, upload.array("file", 5), async (req, res) => {
       content: req.body.content || "",
       anonymous: req.body.anonymous === "true",
       media: [],
-      reactions: {},       // counts will be calculated dynamically
-      userReactions: {},   // Map<userId, reaction>
+      reactions: {},
+      userReactions: {},
       comments: [],
       readBy: [],
     });
@@ -55,31 +55,10 @@ router.post("/", authMiddleware, upload.array("file", 5), async (req, res) => {
   }
 });
 
-/* ---------- GET POSTS (updated to include userReaction + counts) ---------- */
-router.get("/", authMiddleware, async (req, res) => {
-  try {
-    const posts = await Post.find().sort({ createdAt: -1 });
-    const userId = req.user.id;
-
-    const data = posts.map((post) => {
-      const reactionsObj = {};
-      // Convert Map of arrays to counts
-      for (const [key, users] of post.reactions.entries()) {
-        reactionsObj[key] = Array.isArray(users) ? users.length : 0;
-      }
-
-      return {
-        ...post.toObject(),
-        reactions: reactionsObj,
-        userReaction: post.userReactions.get(userId) || null,
-      };
-    });
-
-    res.json(data);
-  } catch (err) {
-    console.error("FETCH POSTS ERROR:", err);
-    res.status(500).json({ message: "Failed to fetch posts" });
-  }
+/* ---------- GET POSTS ---------- */
+router.get("/", async (_, res) => {
+  const posts = await Post.find().sort({ createdAt: -1 });
+  res.json(posts);
 });
 
 /* ---------- REACT / UNREACT / SWITCH ---------- */
@@ -95,15 +74,14 @@ router.post("/:id/react", authMiddleware, async (req, res) => {
 
     // Remove previous reaction
     if (prevReaction) {
-      const users = post.reactions.get(prevReaction) || [];
       post.reactions.set(
         prevReaction,
-        users.filter((u) => u.userId !== userId)
+        Math.max((post.reactions.get(prevReaction) || 1) - 1, 0)
       );
       post.userReactions.delete(userId);
     }
 
-    // Add new reaction
+    // ✅ ADD NEW REACTION (WITH USER INITIAL DATA)
     if (reaction) {
       const users = post.reactions.get(reaction) || [];
       users.push({
@@ -117,25 +95,19 @@ router.post("/:id/react", authMiddleware, async (req, res) => {
 
     await post.save();
 
-    // Convert reactions Map to counts for frontend
-    const reactionsObj = {};
-    for (const [key, users] of post.reactions.entries()) {
-      reactionsObj[key] = Array.isArray(users) ? users.length : 0;
-    }
-
-    // 🔥 SOCKET EVENT
+    // 🔥 SOCKET EVENT (safe)
     const io = req.app.get("io");
     if (io) {
       io.emit("reaction:update", {
         postId: post._id,
-        reactions: reactionsObj,
+        reactions: Object.fromEntries(post.reactions),
       });
     }
 
     res.json({
       postId: post._id,
-      reactions: reactionsObj,
-      userReaction: post.userReactions.get(userId) || null,
+      reactions: Object.fromEntries(post.reactions),
+      userReaction: reaction || null,
     });
   } catch (err) {
     console.error("REACTION ERROR:", err);
@@ -145,22 +117,17 @@ router.post("/:id/react", authMiddleware, async (req, res) => {
 
 /* ---------- COMMENT ---------- */
 router.post("/:id/comment", authMiddleware, async (req, res) => {
-  try {
-    const post = await Post.findById(req.params.id);
-    if (!post) return res.sendStatus(404);
+  const post = await Post.findById(req.params.id);
+  if (!post) return res.sendStatus(404);
 
-    post.comments.push({
-      text: req.body.text,
-      userName: req.user.pseudonym,
-      createdAt: new Date(),
-    });
+  post.comments.push({
+    text: req.body.text,
+    userName: req.user.pseudonym,
+    createdAt: new Date(),
+  });
 
-    await post.save();
-    res.json(post.comments);
-  } catch (err) {
-    console.error("COMMENT ERROR:", err);
-    res.status(500).json({ message: "Comment failed" });
-  }
+  await post.save();
+  res.json(post.comments);
 });
 
 export default router;
