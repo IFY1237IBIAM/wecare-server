@@ -5,6 +5,15 @@ const mediaSchema = new mongoose.Schema({
   type: String, // image | video
 });
 
+const reactionUserSchema = new mongoose.Schema(
+  {
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    reaction: String,
+    pseudonym: String,
+  },
+  { _id: false }
+);
+
 const postSchema = new mongoose.Schema(
   {
     user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
@@ -15,13 +24,7 @@ const postSchema = new mongoose.Schema(
     // reactionKey -> [{ userId, reaction, pseudonym }]
     reactions: {
       type: Map,
-      of: [
-        {
-          userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-          reaction: String,
-          pseudonym: String,
-        },
-      ],
+      of: [reactionUserSchema],
       default: {},
     },
 
@@ -41,4 +44,4 @@ const postSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-export default mongoose.model("Post", postSchema)
+export default mongoose.model("Post", postSchema);

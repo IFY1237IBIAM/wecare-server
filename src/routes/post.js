@@ -72,30 +72,40 @@ router.post("/:id/react", authMiddleware, async (req, res) => {
 
     const prevReaction = post.userReactions.get(userId);
 
-    // Remove previous reaction
+    /* ---------- REMOVE PREVIOUS REACTION ---------- */
     if (prevReaction) {
-      post.reactions.set(
-        prevReaction,
-        Math.max((post.reactions.get(prevReaction) || 1) - 1, 0)
+      const prevUsers = post.reactions.get(prevReaction) || [];
+
+      const filteredUsers = prevUsers.filter(
+        (u) => u.userId.toString() !== userId
       );
+
+      if (filteredUsers.length > 0) {
+        post.reactions.set(prevReaction, filteredUsers);
+      } else {
+        post.reactions.delete(prevReaction);
+      }
+
       post.userReactions.delete(userId);
     }
 
-    // ✅ ADD NEW REACTION (WITH USER INITIAL DATA)
+    /* ---------- ADD NEW REACTION ---------- */
     if (reaction) {
       const users = post.reactions.get(reaction) || [];
+
       users.push({
         userId,
         reaction,
-        pseudonym: req.user.pseudonym || "Anon",
+        pseudonym: req.user.pseudonym || "Anonymous",
       });
+
       post.reactions.set(reaction, users);
       post.userReactions.set(userId, reaction);
     }
 
     await post.save();
 
-    // 🔥 SOCKET EVENT (safe)
+    /* ---------- SOCKET EVENT ---------- */
     const io = req.app.get("io");
     if (io) {
       io.emit("reaction:update", {
