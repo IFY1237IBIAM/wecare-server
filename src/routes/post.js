@@ -32,8 +32,8 @@ router.post("/", authMiddleware, upload.array("file", 5), async (req, res) => {
       content: req.body.content || "",
       anonymous: req.body.anonymous === "true",
       media: [],
-      reactions: {},
-      userReactions: {},
+      reactions: {},       // counts will be calculated dynamically
+      userReactions: {},   // Map<userId, reaction>
       comments: [],
       readBy: [],
     });
@@ -55,10 +55,31 @@ router.post("/", authMiddleware, upload.array("file", 5), async (req, res) => {
   }
 });
 
-/* ---------- GET POSTS ---------- */
-router.get("/", async (_, res) => {
-  const posts = await Post.find().sort({ createdAt: -1 });
-  res.json(posts);
+/* ---------- GET POSTS (updated to include userReaction + counts) ---------- */
+router.get("/", authMiddleware, async (req, res) => {
+  try {
+    const posts = await Post.find().sort({ createdAt: -1 });
+    const userId = req.user.id;
+
+    const data = posts.map((post) => {
+      const reactionsObj = {};
+      // Convert Map of arrays to counts
+      for (const [key, users] of post.reactions.entries()) {
+        reactionsObj[key] = Array.isArray(users) ? users.length : 0;
+      }
+
+      return {
+        ...post.toObject(),
+        reactions: reactionsObj,
+        userReaction: post.userReactions.get(userId) || null,
+      };
+    });
+
+    res.json(data);
+  } catch (err) {
+    console.error("FETCH POSTS ERROR:", err);
+    res.status(500).json({ message: "Failed to fetch posts" });
+  }
 });
 
 /* ---------- REACT / UNREACT / SWITCH ---------- */
@@ -74,37 +95,47 @@ router.post("/:id/react", authMiddleware, async (req, res) => {
 
     // Remove previous reaction
     if (prevReaction) {
+      const users = post.reactions.get(prevReaction) || [];
       post.reactions.set(
         prevReaction,
-        Math.max((post.reactions.get(prevReaction) || 1) - 1, 0)
+        users.filter((u) => u.userId !== userId)
       );
       post.userReactions.delete(userId);
     }
 
-    // Add new reaction (if not removing)
+    // Add new reaction
     if (reaction) {
-      post.reactions.set(
+      const users = post.reactions.get(reaction) || [];
+      users.push({
+        userId,
         reaction,
-        (post.reactions.get(reaction) || 0) + 1
-      );
+        pseudonym: req.user.pseudonym || "Anon",
+      });
+      post.reactions.set(reaction, users);
       post.userReactions.set(userId, reaction);
     }
 
     await post.save();
 
-    // 🔥 SOCKET EVENT (safe)
+    // Convert reactions Map to counts for frontend
+    const reactionsObj = {};
+    for (const [key, users] of post.reactions.entries()) {
+      reactionsObj[key] = Array.isArray(users) ? users.length : 0;
+    }
+
+    // 🔥 SOCKET EVENT
     const io = req.app.get("io");
     if (io) {
       io.emit("reaction:update", {
         postId: post._id,
-        reactions: Object.fromEntries(post.reactions),
+        reactions: reactionsObj,
       });
     }
 
     res.json({
       postId: post._id,
-      reactions: Object.fromEntries(post.reactions),
-      userReaction: reaction || null,
+      reactions: reactionsObj,
+      userReaction: post.userReactions.get(userId) || null,
     });
   } catch (err) {
     console.error("REACTION ERROR:", err);
@@ -114,17 +145,22 @@ router.post("/:id/react", authMiddleware, async (req, res) => {
 
 /* ---------- COMMENT ---------- */
 router.post("/:id/comment", authMiddleware, async (req, res) => {
-  const post = await Post.findById(req.params.id);
-  if (!post) return res.sendStatus(404);
+  try {
+    const post = await Post.findById(req.params.id);
+    if (!post) return res.sendStatus(404);
 
-  post.comments.push({
-    text: req.body.text,
-    userName: req.user.pseudonym,
-    createdAt: new Date(),
-  });
+    post.comments.push({
+      text: req.body.text,
+      userName: req.user.pseudonym,
+      createdAt: new Date(),
+    });
 
-  await post.save();
-  res.json(post.comments);
+    await post.save();
+    res.json(post.comments);
+  } catch (err) {
+    console.error("COMMENT ERROR:", err);
+    res.status(500).json({ message: "Comment failed" });
+  }
 });
 
 export default router;

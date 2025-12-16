@@ -12,10 +12,16 @@ const postSchema = new mongoose.Schema(
     content: String,
     media: [mediaSchema],
 
-    // reactionKey -> count (SAFE FOR UI)
+    // reactionKey -> [{ userId, reaction, pseudonym }]
     reactions: {
       type: Map,
-      of: Number,
+      of: [
+        {
+          userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+          reaction: String,
+          pseudonym: String,
+        },
+      ],
       default: {},
     },
 
