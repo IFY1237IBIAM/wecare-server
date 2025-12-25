@@ -30,3 +30,4 @@ export const sendMail = async ({ to, subject, html }) => {
 export const getVerifyUrl = (token, email) => {
   return `${SERVER_URL}/api/auth/verify-email?token=${token}&email=${encodeURIComponent(email)}`;
 };
+  

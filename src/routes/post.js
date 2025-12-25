@@ -56,9 +56,18 @@ router.post("/", authMiddleware, upload.array("file", 5), async (req, res) => {
 });
 
 /* ---------- GET POSTS ---------- */
-router.get("/", async (_, res) => {
+router.get("/", authMiddleware, async (req, res) => {
+  const userId = req.user.id;
+
   const posts = await Post.find().sort({ createdAt: -1 });
-  res.json(posts);
+
+  const enriched = posts.map((post) => {
+    const obj = post.toObject();
+    obj.__myReaction = post.userReactions?.get(userId) || null;
+    return obj;
+  });
+
+  res.json(enriched);
 });
 
 /* ---------- REACT / UNREACT / SWITCH ---------- */
