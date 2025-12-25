@@ -64,7 +64,13 @@ router.get("/", authMiddleware, async (req, res) => {
   const enriched = posts.map((post) => {
     const obj = post.toObject();
 
-    obj.__currentUserId = userId; // ✅ ADD THIS
+    // ✅ Convert Map to plain object with arrays
+    obj.reactions = {};
+    for (const [key, users] of post.reactions.entries()) {
+      obj.reactions[key] = Array.isArray(users) ? users : [];
+    }
+
+    obj.__currentUserId = userId; // for frontend
     obj.__myReaction = post.userReactions?.get(userId) || null;
 
     return obj;
