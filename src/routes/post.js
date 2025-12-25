@@ -63,12 +63,16 @@ router.get("/", authMiddleware, async (req, res) => {
 
   const enriched = posts.map((post) => {
     const obj = post.toObject();
+
+    obj.__currentUserId = userId; // ✅ ADD THIS
     obj.__myReaction = post.userReactions?.get(userId) || null;
+
     return obj;
   });
 
   res.json(enriched);
 });
+
 
 /* ---------- REACT / UNREACT / SWITCH ---------- */
 router.post("/:id/react", authMiddleware, async (req, res) => {
