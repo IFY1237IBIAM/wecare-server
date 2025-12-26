@@ -14,6 +14,47 @@ const reactionUserSchema = new mongoose.Schema(
   { _id: false }
 );
 
+/* =========================
+   STEP 1 — COMMENT SCHEMAS
+   ========================= */
+
+const commentReactionSchema = new mongoose.Schema(
+  {
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    reaction: String,
+  },
+  { _id: false }
+);
+
+const commentSchema = new mongoose.Schema(
+  {
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    pseudonym: String,
+    text: String,
+
+    parentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: null, // null = main comment, not a reply
+    },
+
+    reactions: {
+      type: Map,
+      of: [commentReactionSchema],
+      default: {},
+    },
+
+    createdAt: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  { _id: true }
+);
+
+/* =========================
+   POST SCHEMA
+   ========================= */
+
 const postSchema = new mongoose.Schema(
   {
     user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
@@ -35,7 +76,7 @@ const postSchema = new mongoose.Schema(
       default: {},
     },
 
-    comments: Array,
+    comments: [commentSchema],
     readBy: [String],
     type: String,
     mood: String,

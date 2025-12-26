@@ -64,13 +64,12 @@ router.get("/", authMiddleware, async (req, res) => {
   const enriched = posts.map((post) => {
     const obj = post.toObject();
 
-    // ✅ Convert Map to plain object with arrays
     obj.reactions = {};
     for (const [key, users] of post.reactions.entries()) {
       obj.reactions[key] = Array.isArray(users) ? users : [];
     }
 
-    obj.__currentUserId = userId; // for frontend
+    obj.__currentUserId = userId;
     obj.__myReaction = post.userReactions?.get(userId) || null;
 
     return obj;
@@ -79,17 +78,15 @@ router.get("/", authMiddleware, async (req, res) => {
   res.json(enriched);
 });
 
-
 /* ---------- REACT / UNREACT / SWITCH ---------- */
 router.post("/:id/react", authMiddleware, async (req, res) => {
   try {
-    const { reaction } = req.body; // string | null
+    const { reaction } = req.body;
     const userId = req.user.id;
 
     const post = await Post.findById(req.params.id);
     if (!post) return res.sendStatus(404);
 
-    /* ---------- SAFETY: FIX CORRUPTED DATA ---------- */
     for (const [key, value] of post.reactions.entries()) {
       if (!Array.isArray(value)) {
         post.reactions.set(key, []);
@@ -98,7 +95,6 @@ router.post("/:id/react", authMiddleware, async (req, res) => {
 
     const prevReaction = post.userReactions.get(userId);
 
-    /* ---------- REMOVE PREVIOUS ---------- */
     if (prevReaction) {
       const users = post.reactions.get(prevReaction) || [];
       const filtered = users.filter(
@@ -114,7 +110,6 @@ router.post("/:id/react", authMiddleware, async (req, res) => {
       post.userReactions.delete(userId);
     }
 
-    /* ---------- ADD NEW ---------- */
     if (reaction) {
       const users = post.reactions.get(reaction) || [];
 
@@ -130,7 +125,6 @@ router.post("/:id/react", authMiddleware, async (req, res) => {
 
     await post.save();
 
-    /* ---------- SOCKET ---------- */
     const io = req.app.get("io");
     if (io) {
       io.emit("reaction:update", {
@@ -150,19 +144,35 @@ router.post("/:id/react", authMiddleware, async (req, res) => {
   }
 });
 
-/* ---------- COMMENT ---------- */
+/* ---------- ADD COMMENT (POST OR REPLY) — STEP 3 ---------- */
 router.post("/:id/comment", authMiddleware, async (req, res) => {
-  const post = await Post.findById(req.params.id);
-  if (!post) return res.sendStatus(404);
+  try {
+    const { text, parentId = null } = req.body;
 
-  post.comments.push({
-    text: req.body.text,
-    userName: req.user.pseudonym,
-    createdAt: new Date(),
-  });
+    if (!text?.trim()) {
+      return res.status(400).json({ message: "Comment required" });
+    }
 
-  await post.save();
-  res.json(post.comments);
+    const post = await Post.findById(req.params.id);
+    if (!post) return res.sendStatus(404);
+
+    const comment = {
+      userId: req.user.id,
+      pseudonym: req.user.pseudonym || "Anonymous",
+      text,
+      parentId,
+      reactions: {},
+      createdAt: new Date(),
+    };
+
+    post.comments.push(comment);
+    await post.save();
+
+    res.status(201).json(comment);
+  } catch (err) {
+    console.error("COMMENT ERROR:", err);
+    res.status(500).json({ message: "Comment failed" });
+  }
 });
 
 export default router;
