@@ -17,6 +17,19 @@ const commentSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+const reactionSchema = new mongoose.Schema({
+  user: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User",
+    required: true,
+  },
+  type: {
+    type: String,
+    enum: ["care", "heart", "hug", "strong", "cry", "hope"],
+    required: true,
+  },
+});
+
 const postSchema = new mongoose.Schema(
   {
     author: {
@@ -35,13 +48,12 @@ const postSchema = new mongoose.Schema(
       enum: ["heartbreak", "fear", "sadness", "struggle", "hope"],
       default: "sadness",
     },
-    likes: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+    reactions: [reactionSchema],
     comments: [commentSchema],
   },
   { timestamps: true }
 );
 
-// Index for faster feed queries
 postSchema.index({ createdAt: -1 });
 
 module.exports = mongoose.model("Post", postSchema);
