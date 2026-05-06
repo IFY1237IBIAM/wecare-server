@@ -51,54 +51,68 @@ exports.getFeed = async (req, res) => {
 };
 
 // @route  POST /api/posts/:id/react
+// @route  POST /api/posts/:id/react
 exports.reactToPost = async (req, res) => {
   try {
+    console.log("REQ USER:", req.user);
+    console.log("POST ID:", req.params.id);
+    console.log("REACTION TYPE:", req.body.type);
+
     const { type } = req.body;
     const validTypes = ["care", "heart", "hug", "strong", "cry", "hope"];
 
-    if (!validTypes.includes(type)) {
+    if (!type || !validTypes.includes(type)) {
       return res.status(400).json({ message: "Invalid reaction type" });
+    }
+
+    if (!req.user || !req.user._id) {
+      return res.status(401).json({ message: "User not found in request" });
     }
 
     const post = await Post.findById(req.params.id);
     if (!post) return res.status(404).json({ message: "Post not found" });
 
-    // Check if user already reacted
-    const existingIndex = post.reactions.findIndex(
-      (r) => r.user.toString() === req.user._id.toString()
-    );
+    console.log("POST FOUND:", post._id);
+    console.log("REACTIONS:", post.reactions);
+
+    // Find if user already reacted
+    const existingIndex = post.reactions.findIndex((r) => {
+      console.log("Comparing:", r.user, "with", req.user._id);
+      return r.user && r.user.toString() === req.user._id.toString();
+    });
+
+    console.log("EXISTING INDEX:", existingIndex);
 
     if (existingIndex !== -1) {
       const existingType = post.reactions[existingIndex].type;
       if (existingType === type) {
-        // Same reaction — remove it (toggle off)
         post.reactions.splice(existingIndex, 1);
       } else {
-        // Different reaction — update it
         post.reactions[existingIndex].type = type;
       }
     } else {
-      // New reaction
       post.reactions.push({ user: req.user._id, type });
     }
 
     await post.save({ validateBeforeSave: false });
 
-    // Build reaction counts
     const reactionCounts = {};
     post.reactions.forEach((r) => {
       reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1;
     });
 
+    const userReaction = post.reactions.find(
+      (r) => r.user && r.user.toString() === req.user._id.toString()
+    );
+
     return res.json({
       message: "Reaction updated 💜",
       reactionCounts,
       totalReactions: post.reactions.length,
-      userReaction: post.reactions.find(
-        (r) => r.user.toString() === req.user._id.toString()
-      )?.type || null,
+      userReaction: userReaction?.type || null,
     });
   } catch (error) {
+    console.error("REACT ERROR FULL:", error);
     return res.status(500).json({ message: error.message });
   }
 };
