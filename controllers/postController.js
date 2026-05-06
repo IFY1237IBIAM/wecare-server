@@ -31,16 +31,18 @@ exports.getFeed = async (req, res) => {
       .limit(limit)
       .select("-author");
 
-    // Add reaction summary to each post
     const postsWithReactions = posts.map((post) => {
+      const obj = post.toObject();
+      const reactions = Array.isArray(obj.reactions) ? obj.reactions : [];
       const reactionCounts = {};
-      post.reactions.forEach((r) => {
-        reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1;
+      reactions.forEach((r) => {
+        if (r.type) reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1;
       });
       return {
-        ...post.toObject(),
+        ...obj,
+        reactions,
         reactionCounts,
-        totalReactions: post.reactions.length,
+        totalReactions: reactions.length,
       };
     });
 
@@ -51,13 +53,8 @@ exports.getFeed = async (req, res) => {
 };
 
 // @route  POST /api/posts/:id/react
-// @route  POST /api/posts/:id/react
 exports.reactToPost = async (req, res) => {
   try {
-    console.log("REQ USER:", req.user);
-    console.log("POST ID:", req.params.id);
-    console.log("REACTION TYPE:", req.body.type);
-
     const { type } = req.body;
     const validTypes = ["care", "heart", "hug", "strong", "cry", "hope"];
 
@@ -65,32 +62,35 @@ exports.reactToPost = async (req, res) => {
       return res.status(400).json({ message: "Invalid reaction type" });
     }
 
-    if (!req.user || !req.user._id) {
-      return res.status(401).json({ message: "User not found in request" });
-    }
+    // Fix old posts where reactions is not an array
+    await Post.updateOne(
+      { _id: req.params.id, $nor: [{ reactions: { $type: "array" } }] },
+      { $set: { reactions: [] } }
+    );
 
     const post = await Post.findById(req.params.id);
     if (!post) return res.status(404).json({ message: "Post not found" });
 
-    console.log("POST FOUND:", post._id);
-    console.log("REACTIONS:", post.reactions);
+    // Safety check
+    if (!Array.isArray(post.reactions)) {
+      post.reactions = [];
+    }
 
-    // Find if user already reacted
-    const existingIndex = post.reactions.findIndex((r) => {
-      console.log("Comparing:", r.user, "with", req.user._id);
-      return r.user && r.user.toString() === req.user._id.toString();
-    });
-
-    console.log("EXISTING INDEX:", existingIndex);
+    const userId = req.user._id.toString();
+    const existingIndex = post.reactions.findIndex(
+      (r) => r.user && r.user.toString() === userId
+    );
 
     if (existingIndex !== -1) {
-      const existingType = post.reactions[existingIndex].type;
-      if (existingType === type) {
+      if (post.reactions[existingIndex].type === type) {
+        // Same reaction — toggle off
         post.reactions.splice(existingIndex, 1);
       } else {
+        // Different reaction — update
         post.reactions[existingIndex].type = type;
       }
     } else {
+      // New reaction
       post.reactions.push({ user: req.user._id, type });
     }
 
@@ -98,11 +98,11 @@ exports.reactToPost = async (req, res) => {
 
     const reactionCounts = {};
     post.reactions.forEach((r) => {
-      reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1;
+      if (r.type) reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1;
     });
 
     const userReaction = post.reactions.find(
-      (r) => r.user && r.user.toString() === req.user._id.toString()
+      (r) => r.user && r.user.toString() === userId
     );
 
     return res.json({
@@ -112,7 +112,6 @@ exports.reactToPost = async (req, res) => {
       userReaction: userReaction?.type || null,
     });
   } catch (error) {
-    console.error("REACT ERROR FULL:", error);
     return res.status(500).json({ message: error.message });
   }
 };
