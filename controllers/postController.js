@@ -45,24 +45,21 @@ exports.getFeed = async (req, res) => {
 exports.toggleLike = async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
-
-    if (!post) {
-      return res.status(404).json({ message: "Post not found" });
-    }
+    if (!post) return res.status(404).json({ message: "Post not found" });
 
     const alreadyLiked = post.likes.includes(req.user._id);
 
-    if (alreadyLiked) {
-      post.likes.pull(req.user._id);
-    } else {
-      post.likes.push(req.user._id);
-    }
-
-    await post.save();
+    const updated = await Post.findByIdAndUpdate(
+      req.params.id,
+      alreadyLiked
+        ? { $pull: { likes: req.user._id } }
+        : { $addToSet: { likes: req.user._id } },
+      { new: true, runValidators: false }
+    );
 
     return res.json({
       message: alreadyLiked ? "Unliked" : "💜 Here for you",
-      likesCount: post.likes.length,
+      likesCount: updated.likes.length,
     });
   } catch (error) {
     return res.status(500).json({ message: error.message });
@@ -73,38 +70,40 @@ exports.toggleLike = async (req, res) => {
 exports.addComment = async (req, res) => {
   try {
     const { text } = req.body;
-
-    if (!text) {
-      return res.status(400).json({ message: "Comment text is required" });
-    }
+    if (!text) return res.status(400).json({ message: "Comment text is required" });
 
     const post = await Post.findById(req.params.id);
-
-    if (!post) {
-      return res.status(404).json({ message: "Post not found" });
-    }
+    if (!post) return res.status(404).json({ message: "Post not found" });
 
     if (post.comments.length >= 50) {
       return res.status(400).json({ message: "Comment limit reached" });
     }
 
-    post.comments.push({
-      author: req.user._id,
-      pseudonym: req.user.pseudonym,
-      text,
-    });
+    const updated = await Post.findByIdAndUpdate(
+      req.params.id,
+      {
+        $push: {
+          comments: {
+            author: req.user._id,
+            pseudonym: req.user.pseudonym,
+            text,
+            createdAt: new Date(),
+          },
+        },
+      },
+      { new: true, runValidators: false }
+    );
 
-    await post.save();
+    const newComment = updated.comments[updated.comments.length - 1];
 
     return res.status(201).json({
       message: "Comment added 💜",
-      comment: post.comments[post.comments.length - 1],
+      comment: newComment,
     });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
 };
-
 // @route  DELETE /api/posts/:id
 exports.deletePost = async (req, res) => {
   try {
