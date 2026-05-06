@@ -151,6 +151,35 @@ exports.addComment = async (req, res) => {
   }
 };
 
+
+
+// @route  PUT /api/posts/:id
+exports.editPost = async (req, res) => {
+  try {
+    const { content, mood } = req.body;
+    const post = await Post.findById(req.params.id);
+
+    if (!post) return res.status(404).json({ message: "Post not found" });
+
+    if (post.author.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: "Not allowed to edit this post" });
+    }
+
+    if (content) post.content = content;
+    if (mood) post.mood = mood;
+    post.edited = true;
+
+    await post.save({ validateBeforeSave: false });
+
+    return res.json({ message: "Post updated 💜", post });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+
+
+
 // @route  DELETE /api/posts/:id
 exports.deletePost = async (req, res) => {
   try {
