@@ -17,14 +17,23 @@ exports.protect = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = await User.findById(decoded.id);
-
-    if (!req.user) {
+    
+    const user = await User.findById(decoded.id);
+    if (!user) {
       return res.status(401).json({ message: "User no longer exists" });
     }
 
+    // Attach full user object with guaranteed _id
+    req.user = {
+      _id: user._id,
+      id: user._id.toString(),
+      pseudonym: user.pseudonym,
+      email: user.email,
+    };
+
     next();
   } catch (error) {
-    res.status(401).json({ message: "Not authorized, token failed" });
+    console.error("Auth middleware error:", error.message);
+    return res.status(401).json({ message: "Not authorized, token failed" });
   }
 };
