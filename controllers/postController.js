@@ -1,4 +1,6 @@
 const Post = require("../models/Post");
+const Report = require("../models/Report");
+const { analyzeContent } = require("../middleware/contentModerator");
 
 // @route  POST /api/posts
 exports.createPost = async (req, res) => {
@@ -6,14 +8,37 @@ exports.createPost = async (req, res) => {
     const { content, mood } = req.body;
     if (!content) return res.status(400).json({ message: "Content is required" });
 
+    const modResult = analyzeContent(content);
+
+    if (modResult.autoReject) {
+      return res.status(400).json({
+        message: "Your post could not be shared as it may contain harmful content. Please review our community guidelines.",
+        flagType: modResult.flags[0]?.type,
+      });
+    }
+
     const post = await Post.create({
       author: req.user._id,
       pseudonym: req.user.pseudonym,
       content,
       mood: mood || "sadness",
+      flagged: modResult.crisisDetected || modResult.profanityDetected,
+      flagType: modResult.flags[0]?.type || null,
     });
 
-    return res.status(201).json({ message: "Post created 💜", post });
+    const response = { message: "Post created 💜", post };
+
+    if (modResult.crisisDetected) {
+      response.crisisDetected = true;
+      response.crisisMessage = "We noticed your post may be expressing thoughts of self-harm. You are not alone 💜";
+      response.crisisResources = [
+        { name: "International Association for Suicide Prevention", url: "https://www.iasp.info/resources/Crisis_Centres/" },
+        { name: "Crisis Text Line", info: "Text HOME to 741741 (US)" },
+        { name: "Befrienders Worldwide", url: "https://www.befrienders.org" },
+      ];
+    }
+
+    return res.status(201).json(response);
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
@@ -38,12 +63,7 @@ exports.getFeed = async (req, res) => {
       reactions.forEach((r) => {
         if (r.type) reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1;
       });
-      return {
-        ...obj,
-        reactions,
-        reactionCounts,
-        totalReactions: reactions.length,
-      };
+      return { ...obj, reactions, reactionCounts, totalReactions: reactions.length };
     });
 
     return res.json({ posts: postsWithReactions, count: posts.length });
@@ -57,12 +77,10 @@ exports.reactToPost = async (req, res) => {
   try {
     const { type } = req.body;
     const validTypes = ["care", "heart", "hug", "strong", "cry", "hope"];
-
     if (!type || !validTypes.includes(type)) {
       return res.status(400).json({ message: "Invalid reaction type" });
     }
 
-    // Fix old posts where reactions is not an array
     await Post.updateOne(
       { _id: req.params.id, $nor: [{ reactions: { $type: "array" } }] },
       { $set: { reactions: [] } }
@@ -70,11 +88,7 @@ exports.reactToPost = async (req, res) => {
 
     const post = await Post.findById(req.params.id);
     if (!post) return res.status(404).json({ message: "Post not found" });
-
-    // Safety check
-    if (!Array.isArray(post.reactions)) {
-      post.reactions = [];
-    }
+    if (!Array.isArray(post.reactions)) post.reactions = [];
 
     const userId = req.user._id.toString();
     const existingIndex = post.reactions.findIndex(
@@ -83,14 +97,11 @@ exports.reactToPost = async (req, res) => {
 
     if (existingIndex !== -1) {
       if (post.reactions[existingIndex].type === type) {
-        // Same reaction — toggle off
         post.reactions.splice(existingIndex, 1);
       } else {
-        // Different reaction — update
         post.reactions[existingIndex].type = type;
       }
     } else {
-      // New reaction
       post.reactions.push({ user: req.user._id, type });
     }
 
@@ -122,9 +133,15 @@ exports.addComment = async (req, res) => {
     const { text } = req.body;
     if (!text) return res.status(400).json({ message: "Comment text is required" });
 
+    const modResult = analyzeContent(text);
+    if (modResult.autoReject) {
+      return res.status(400).json({
+        message: "Your comment contains content that violates our community guidelines.",
+      });
+    }
+
     const post = await Post.findById(req.params.id);
     if (!post) return res.status(404).json({ message: "Post not found" });
-
     if (post.comments.length >= 50) {
       return res.status(400).json({ message: "Comment limit reached" });
     }
@@ -151,47 +168,94 @@ exports.addComment = async (req, res) => {
   }
 };
 
-
-
 // @route  PUT /api/posts/:id
 exports.editPost = async (req, res) => {
   try {
     const { content, mood } = req.body;
     const post = await Post.findById(req.params.id);
-
     if (!post) return res.status(404).json({ message: "Post not found" });
-
     if (post.author.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: "Not allowed to edit this post" });
     }
-
-    if (content) post.content = content;
+    if (content) {
+      const modResult = analyzeContent(content);
+      if (modResult.autoReject) {
+        return res.status(400).json({ message: "Edited content violates community guidelines." });
+      }
+      post.content = content;
+    }
     if (mood) post.mood = mood;
-    post.edited = true;
-
     await post.save({ validateBeforeSave: false });
-
     return res.json({ message: "Post updated 💜", post });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
 };
 
-
-
-
 // @route  DELETE /api/posts/:id
 exports.deletePost = async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
     if (!post) return res.status(404).json({ message: "Post not found" });
-
     if (post.author.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: "Not allowed to delete this post" });
     }
-
     await post.deleteOne();
     return res.json({ message: "Post deleted" });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+// @route  POST /api/posts/:id/report
+exports.reportPost = async (req, res) => {
+  try {
+    const { reason, details } = req.body;
+    const validReasons = ["harmful_content", "spam", "inappropriate", "bullying", "misinformation", "other"];
+
+    if (!reason || !validReasons.includes(reason)) {
+      return res.status(400).json({ message: "Valid reason is required" });
+    }
+
+    const post = await Post.findById(req.params.id);
+    if (!post) return res.status(404).json({ message: "Post not found" });
+
+    const existing = await Report.findOne({
+      post: req.params.id,
+      reportedBy: req.user._id,
+    });
+    if (existing) {
+      return res.status(400).json({ message: "You have already reported this post" });
+    }
+
+    const modResult = analyzeContent(post.content);
+
+    const report = await Report.create({
+      post: req.params.id,
+      reportedBy: req.user._id,
+      reason,
+      details: details || "",
+      autoFlagged: modResult.flags.length > 0,
+      flagType: modResult.flags[0]?.type || null,
+      postContent: post.content,
+      postPseudonym: post.pseudonym,
+    });
+
+    const reportCount = await Report.countDocuments({
+      post: req.params.id,
+      status: "pending",
+    });
+    if (reportCount >= 3) {
+      await Post.findByIdAndUpdate(req.params.id, {
+        flagged: true,
+        flagType: "community_reports",
+      });
+    }
+
+    return res.status(201).json({
+      message: "Thank you for keeping WeCare safe 💜",
+      reportId: report._id,
+    });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
