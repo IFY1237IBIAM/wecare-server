@@ -8,7 +8,7 @@ exports.createPost = async (req, res) => {
     const { content, mood } = req.body;
     if (!content) return res.status(400).json({ message: "Content is required" });
 
-    const modResult = analyzeContent(content);
+    const modResult = await analyzeContent(content);
 
     if (modResult.autoReject) {
       return res.status(400).json({
@@ -133,7 +133,7 @@ exports.addComment = async (req, res) => {
     const { text } = req.body;
     if (!text) return res.status(400).json({ message: "Comment text is required" });
 
-    const modResult = analyzeContent(text);
+    const modResult = await analyzeContent(text);
     if (modResult.autoReject) {
       return res.status(400).json({
         message: "Your comment contains content that violates our community guidelines.",
@@ -178,7 +178,7 @@ exports.editPost = async (req, res) => {
       return res.status(403).json({ message: "Not allowed to edit this post" });
     }
     if (content) {
-      const modResult = analyzeContent(content);
+      const modResult = await analyzeContent(content);
       if (modResult.autoReject) {
         return res.status(400).json({ message: "Edited content violates community guidelines." });
       }
@@ -228,7 +228,7 @@ exports.reportPost = async (req, res) => {
       return res.status(400).json({ message: "You have already reported this post" });
     }
 
-    const modResult = analyzeContent(post.content);
+    const modResult = await analyzeContent(post.content);
 
     const report = await Report.create({
       post: req.params.id,
