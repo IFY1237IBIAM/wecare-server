@@ -562,3 +562,30 @@ exports.reportPost = async (req, res) => {
     });
   }
 };
+
+// @route POST /api/posts/:id/save
+exports.savePost = async (req, res) => {
+  try {
+    const User = require("../models/User");
+    const user = await User.findById(req.user._id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const postId = req.params.id;
+    const alreadySaved = user.savedPosts.includes(postId);
+
+    if (alreadySaved) {
+      user.savedPosts.pull(postId);
+    } else {
+      user.savedPosts.push(postId);
+    }
+
+    await user.save({ validateBeforeSave: false });
+
+    return res.json({
+      message: alreadySaved ? "Post removed from saved" : "Post saved 💜",
+      saved: !alreadySaved,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};

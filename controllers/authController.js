@@ -94,3 +94,80 @@ exports.getMe = async (req, res) => {
     return res.status(500).json({ message: error.message });
   }
 };
+
+// @route GET /api/auth/stats
+exports.getUserStats = async (req, res) => {
+  try {
+    const Post = require("../models/Post");
+
+    const myPosts = await Post.find({ author: req.user._id });
+
+    const totalPosts = myPosts.length;
+    const totalReactions = myPosts.reduce((sum, post) => {
+      return sum + (Array.isArray(post.reactions) ? post.reactions.length : 0);
+    }, 0);
+    const totalComments = myPosts.reduce((sum, post) => {
+      return sum + (post.comments?.length || 0);
+    }, 0);
+
+    return res.json({ totalPosts, totalReactions, totalComments });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+// @route GET /api/auth/my-posts
+exports.getMyPosts = async (req, res) => {
+  try {
+    const Post = require("../models/Post");
+
+    const posts = await Post.find({ author: req.user._id })
+      .sort({ createdAt: -1 })
+      .select("-author");
+
+    const postsWithReactions = posts.map((post) => {
+      const obj = post.toObject();
+      const reactions = Array.isArray(obj.reactions) ? obj.reactions : [];
+      const reactionCounts = {};
+      reactions.forEach((r) => {
+        if (r.type) reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1;
+      });
+      return { ...obj, reactions, reactionCounts, totalReactions: reactions.length };
+    });
+
+    return res.json({ posts: postsWithReactions });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+// @route GET /api/auth/saved-posts
+exports.getSavedPosts = async (req, res) => {
+  try {
+    const User = require("../models/User");
+    const Post = require("../models/Post");
+
+    const user = await User.findById(req.user._id).select("savedPosts");
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const posts = await Post.find({
+      _id: { $in: user.savedPosts },
+    })
+      .sort({ createdAt: -1 })
+      .select("-author");
+
+    const postsWithReactions = posts.map((post) => {
+      const obj = post.toObject();
+      const reactions = Array.isArray(obj.reactions) ? obj.reactions : [];
+      const reactionCounts = {};
+      reactions.forEach((r) => {
+        if (r.type) reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1;
+      });
+      return { ...obj, reactions, reactionCounts, totalReactions: reactions.length };
+    });
+
+    return res.json({ posts: postsWithReactions });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
