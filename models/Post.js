@@ -1,10 +1,22 @@
 const mongoose = require("mongoose");
 
+const replySchema = new mongoose.Schema(
+  {
+    author: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    pseudonym: { type: String, required: true },
+    text: { type: String, required: true, maxlength: [200, "Reply cannot exceed 200 characters"] },
+    isPostAuthor: { type: Boolean, default: false },
+  },
+  { timestamps: true }
+);
+
 const commentSchema = new mongoose.Schema(
   {
     author: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     pseudonym: { type: String, required: true },
     text: { type: String, required: true, maxlength: [200, "Comment cannot exceed 200 characters"] },
+    isPostAuthor: { type: Boolean, default: false },
+    replies: [replySchema],
   },
   { timestamps: true }
 );

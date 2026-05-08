@@ -308,25 +308,21 @@ exports.addComment = async (req, res) => {
       });
     }
 
-    const updated =
-      await Post.findByIdAndUpdate(
-        req.params.id,
-        {
-          $push: {
-            comments: {
-              author: req.user._id,
-              pseudonym:
-                req.user.pseudonym,
-              text,
-              createdAt: new Date(),
-            },
-          },
-        },
-        {
-          new: true,
-          runValidators: false,
-        }
-      );
+    const updated = await Post.findByIdAndUpdate(
+  req.params.id,
+  {
+    $push: {
+      comments: {
+        author: req.user._id,
+        pseudonym: req.user.pseudonym,
+        text,
+        isPostAuthor: post.author.toString() === req.user._id.toString(),
+        createdAt: new Date(),
+      },
+    },
+  },
+  { new: true, runValidators: false }
+);
 
     const newComment =
       updated.comments[
@@ -585,6 +581,68 @@ exports.savePost = async (req, res) => {
       message: alreadySaved ? "Post removed from saved" : "Post saved 💜",
       saved: !alreadySaved,
     });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+// @route POST /api/posts/:id/comments/:commentId/replies
+exports.addReply = async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (!text) return res.status(400).json({ message: "Reply text is required" });
+
+    const modResult = await analyzeContent(text);
+    if (modResult.autoReject) {
+      return res.status(400).json({
+        message: "Your reply contains content that violates our community guidelines.",
+      });
+    }
+
+    const post = await Post.findById(req.params.id);
+    if (!post) return res.status(404).json({ message: "Post not found" });
+
+    const comment = post.comments.id(req.params.commentId);
+    if (!comment) return res.status(404).json({ message: "Comment not found" });
+
+    if (comment.replies && comment.replies.length >= 20) {
+      return res.status(400).json({ message: "Reply limit reached for this comment" });
+    }
+
+    // Check if replier is the post author
+    const isPostAuthor = post.author.toString() === req.user._id.toString();
+
+    comment.replies.push({
+      author: req.user._id,
+      pseudonym: req.user.pseudonym,
+      text,
+      isPostAuthor,
+      createdAt: new Date(),
+    });
+
+    await post.save({ validateBeforeSave: false });
+
+    const newReply = comment.replies[comment.replies.length - 1];
+
+    // Notify comment author if not replying to own comment
+    try {
+      if (comment.author.toString() !== req.user._id.toString()) {
+        const Notification = require("../models/Notification");
+        await Notification.create({
+          recipient: comment.author,
+          sender: req.user._id,
+          senderPseudonym: req.user.pseudonym,
+          type: "comment",
+          post: req.params.id,
+          postPreview: post.content?.substring(0, 60),
+          commentText: `Replied: ${text.substring(0, 80)}`,
+        });
+      }
+    } catch (e) {
+      console.log("Reply notification error:", e.message);
+    }
+
+    return res.status(201).json({ message: "Reply added 💜", reply: newReply });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }

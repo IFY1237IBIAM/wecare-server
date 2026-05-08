@@ -28,5 +28,7 @@ router.put("/:id", protect, postController.editPost);
 router.delete("/:id", protect, postController.deletePost);
 router.post("/:id/report", protect, postController.reportPost);
 router.post("/:id/save", protect, postController.savePost);
+router.post("/:id/comments/:commentId/replies", protect, postController.addReply);
+
 
 module.exports = router;
