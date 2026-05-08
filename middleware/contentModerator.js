@@ -1,60 +1,65 @@
-const https = require("https");
+// WeCare Smart Content Moderator
+// No external API needed — works instantly, never goes down
 
 const CRISIS_KEYWORDS = [
   "suicide", "kill myself", "end my life", "want to die", "rather be dead",
   "self harm", "self-harm", "cut myself", "hurt myself", "overdose",
-  "no reason to live", "can't go on", "give up on life",
-  "nobody cares", "better off dead", "don't want to exist",
+  "no reason to live", "can't go on", "give up on life", "better off dead",
+  "don't want to exist", "end it all", "take my own life", "not worth living",
+  "goodbye forever", "final goodbye", "can't take it anymore", "disappear forever",
+  "wrists", "pills to sleep", "jump off", "hang myself",
 ];
 
-const callPerspective = (text) => {
-  return new Promise((resolve, reject) => {
-    const apiKey = process.env.PERSPECTIVE_API_KEY;
-    if (!apiKey) {
-      return resolve(null);
-    }
+const BULLYING_PHRASES = [
+  "kill yourself", "kys", "go die", "go kill yourself", "end yourself",
+  "nobody likes you", "everyone hates you", "you're worthless", "you are worthless",
+  "no one cares about you", "you're ugly", "you are ugly", "you're disgusting",
+  "you are disgusting", "go away forever", "the world is better without you",
+  "you're a waste", "you are a waste", "you don't deserve", "you deserved it",
+  "pathetic loser", "stupid idiot", "fat pig", "you're nothing", "you are nothing",
+];
 
-    const body = JSON.stringify({
-      comment: { text },
-      languages: ["en"],
-      requestedAttributes: {
-        TOXICITY: {},
-        SEVERE_TOXICITY: {},
-        THREAT: {},
-        INSULT: {},
-        IDENTITY_ATTACK: {},
-        SPAM: {},
-      },
-    });
+const HATE_SPEECH = [
+  "all [group] should die", "i hate [group]", "[slur]s should",
+  "ethnic cleansing", "genocide", "white supremacy", "racial slur",
+  // Common slurs omitted here but should be added in your actual implementation
+];
 
-    const url = `https://commentanalyzer.googleapis.com/v1alpha1/comments:analyze?key=${apiKey}`;
-    const urlObj = new URL(url);
+const SEVERE_TOXICITY = [
+  "i will kill you", "i will hurt you", "i know where you live",
+  "you will pay for this", "i will find you", "watch your back",
+  "i will make you suffer", "you are dead", "say your prayers",
+];
 
-    const options = {
-      hostname: urlObj.hostname,
-      path: urlObj.pathname + urlObj.search,
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Content-Length": Buffer.byteLength(body),
-      },
-    };
+const SPAM_PATTERNS = [
+  /https?:\/\//gi,
+  /www\.[a-z]+\.[a-z]+/gi,
+  /\b(buy now|click here|free money|make money fast|earn \$|whatsapp me|telegram me|dm me|follow me|check my bio)\b/gi,
+  /(.)\1{6,}/g,
+  /\b\d{10,}\b/g,
+  /[A-Z]{10,}/g,
+];
 
-    const req = https.request(options, (res) => {
-      let data = "";
-      res.on("data", (chunk) => (data += chunk));
-      res.on("end", () => {
-        try {
-          resolve(JSON.parse(data));
-        } catch (e) {
-          resolve(null);
-        }
-      });
-    });
+const SELF_HARM_METHODS = [
+  "how to cut", "how to overdose", "best way to die", "painless way to die",
+  "how many pills", "lethal dose", "how to hang", "methods of suicide",
+];
 
-    req.on("error", () => resolve(null));
-    req.write(body);
-    req.end();
+const PROFANITY = [
+  "fuck", "shit", "bitch", "asshole", "bastard", "cunt",
+  "motherfucker", "fucker", "damn", "hell", "piss", "cock",
+  "dick", "ass ", " ass", "wtf", "stfu",
+];
+
+const containsAny = (text, list) => {
+  const lower = text.toLowerCase();
+  return list.some((phrase) => lower.includes(phrase.toLowerCase()));
+};
+
+const matchesPattern = (text, patterns) => {
+  return patterns.some((pattern) => {
+    pattern.lastIndex = 0;
+    return pattern.test(text);
   });
 };
 
@@ -66,71 +71,81 @@ exports.analyzeContent = async (text) => {
     bullyingDetected: false,
     spamDetected: false,
     profanityDetected: false,
-    toxicityScore: 0,
+    severeThreatDetected: false,
+    selfHarmMethodDetected: false,
     autoReject: false,
+    toxicityScore: 0,
   };
 
-  // Crisis keywords — always checked locally
+  if (!text || text.trim().length === 0) return result;
+
   const lower = text.toLowerCase();
-  const crisisMatches = CRISIS_KEYWORDS.filter((k) => lower.includes(k));
+
+  // ── Crisis detection (allow but show resources) ──
+  const crisisMatches = CRISIS_KEYWORDS.filter((k) => lower.includes(k.toLowerCase()));
   if (crisisMatches.length > 0) {
     result.crisisDetected = true;
     result.flags.push({ type: "crisis", keywords: crisisMatches });
   }
 
-  // Perspective API check
-  try {
-    const response = await callPerspective(text);
-    if (!response || !response.attributeScores) {
-      console.log("Perspective API unavailable — skipping AI check");
-      return result;
-    }
+  // ── Self harm methods (auto reject) ──
+  if (containsAny(text, SELF_HARM_METHODS)) {
+    result.selfHarmMethodDetected = true;
+    result.autoReject = true;
+    result.approved = false;
+    result.flags.push({ type: "self_harm_method" });
+  }
 
-    const scores = response.attributeScores;
-    const toxicity = scores.TOXICITY?.summaryScore?.value || 0;
-    const severeToxicity = scores.SEVERE_TOXICITY?.summaryScore?.value || 0;
-    const threat = scores.THREAT?.summaryScore?.value || 0;
-    const insult = scores.INSULT?.summaryScore?.value || 0;
-    const identityAttack = scores.IDENTITY_ATTACK?.summaryScore?.value || 0;
-    const spam = scores.SPAM?.summaryScore?.value || 0;
+  // ── Severe threats (auto reject) ──
+  if (containsAny(text, SEVERE_TOXICITY)) {
+    result.severeThreatDetected = true;
+    result.autoReject = true;
+    result.approved = false;
+    result.flags.push({ type: "threat" });
+  }
 
-    result.toxicityScore = Math.round(toxicity * 100);
+  // ── Bullying (auto reject) ──
+  if (containsAny(text, BULLYING_PHRASES)) {
+    result.bullyingDetected = true;
+    result.autoReject = true;
+    result.approved = false;
+    result.flags.push({ type: "bullying" });
+  }
 
-    console.log(`AI Scores — Toxicity: ${Math.round(toxicity * 100)}% | Threat: ${Math.round(threat * 100)}% | Spam: ${Math.round(spam * 100)}%`);
+  // ── Hate speech (auto reject) ──
+  if (containsAny(text, HATE_SPEECH)) {
+    result.autoReject = true;
+    result.approved = false;
+    result.flags.push({ type: "hate_speech" });
+  }
 
-    if (severeToxicity > 0.7 || threat > 0.7) {
-      result.autoReject = true;
-      result.approved = false;
-      result.bullyingDetected = true;
-      result.flags.push({ type: "bullying", score: Math.round(severeToxicity * 100) });
-    }
+  // ── Spam (auto reject) ──
+  if (matchesPattern(text, SPAM_PATTERNS)) {
+    result.spamDetected = true;
+    result.autoReject = true;
+    result.approved = false;
+    result.flags.push({ type: "spam" });
+  }
 
-    if (toxicity > 0.85) {
-      result.autoReject = true;
-      result.approved = false;
-      result.flags.push({ type: "toxic", score: Math.round(toxicity * 100) });
-    }
+  // ── Profanity (flag only, don't reject — people in pain use strong language) ──
+  if (containsAny(text, PROFANITY)) {
+    result.profanityDetected = true;
+    result.flags.push({ type: "profanity" });
+  }
 
-    if (spam > 0.75) {
-      result.autoReject = true;
-      result.approved = false;
-      result.spamDetected = true;
-      result.flags.push({ type: "spam", score: Math.round(spam * 100) });
-    }
+  // ── Toxicity score (rough estimate based on flags) ──
+  let score = 0;
+  if (result.crisisDetected) score += 20;
+  if (result.profanityDetected) score += 20;
+  if (result.bullyingDetected) score += 60;
+  if (result.severeThreatDetected) score += 80;
+  if (result.selfHarmMethodDetected) score += 70;
+  if (result.spamDetected) score += 40;
+  result.toxicityScore = Math.min(score, 100);
 
-    if (toxicity > 0.6 && !result.autoReject) {
-      result.profanityDetected = true;
-      result.flags.push({ type: "profanity", score: Math.round(toxicity * 100) });
-    }
-
-    if (identityAttack > 0.7) {
-      result.autoReject = true;
-      result.approved = false;
-      result.flags.push({ type: "identity_attack", score: Math.round(identityAttack * 100) });
-    }
-
-  } catch (error) {
-    console.error("Perspective API error:", error.message);
+  // Log for monitoring
+  if (result.flags.length > 0) {
+    console.log(`🛡️ Content flagged — Types: ${result.flags.map(f => f.type).join(", ")} | Score: ${result.toxicityScore}% | AutoReject: ${result.autoReject}`);
   }
 
   return result;
