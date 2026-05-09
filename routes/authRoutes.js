@@ -9,5 +9,8 @@ router.get("/me", protect, authController.getMe);
 router.get("/stats", protect, authController.getUserStats);
 router.get("/my-posts", protect, authController.getMyPosts);
 router.get("/saved-posts", protect, authController.getSavedPosts);
+router.put("/presence", protect, authController.updatePresence);
+router.put("/offline", protect, authController.setOffline);
+router.get("/user/:pseudonym", protect, authController.getUserByPseudonym);
 
 module.exports = router;

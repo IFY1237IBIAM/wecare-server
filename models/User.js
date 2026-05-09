@@ -37,6 +37,10 @@ const userSchema = new mongoose.Schema(
 
     bio: { type: String, maxlength: 100, default: "" },
 
+    // Online status
+    lastSeen: { type: Date, default: Date.now },
+    isOnline: { type: Boolean, default: false },
+
     // Saved posts
     savedPosts: [{ type: mongoose.Schema.Types.ObjectId, ref: "Post" }],
   },

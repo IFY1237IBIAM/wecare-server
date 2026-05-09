@@ -171,3 +171,69 @@ exports.getSavedPosts = async (req, res) => {
     return res.status(500).json({ message: error.message });
   }
 };
+
+// @route  PUT /api/auth/presence
+exports.updatePresence = async (req, res) => {
+  try {
+    const User = require("../models/User");
+    await User.findByIdAndUpdate(req.user._id, {
+      isOnline: true,
+      lastSeen: new Date(),
+    });
+    return res.json({ message: "Presence updated" });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+// @route  PUT /api/auth/offline
+exports.setOffline = async (req, res) => {
+  try {
+    const User = require("../models/User");
+    await User.findByIdAndUpdate(req.user._id, {
+      isOnline: false,
+      lastSeen: new Date(),
+    });
+    return res.json({ message: "Set offline" });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+// @route  GET /api/auth/user/:pseudonym
+exports.getUserByPseudonym = async (req, res) => {
+  try {
+    const User = require("../models/User");
+    const Post = require("../models/Post");
+
+    const user = await User.findOne({ pseudonym: req.params.pseudonym })
+      .select("pseudonym avatar isOnline lastSeen createdAt");
+
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    // Get their stats
+    const posts = await Post.find({ author: user._id });
+    const totalPosts = posts.length;
+    const totalReactions = posts.reduce((sum, p) => {
+      return sum + (Array.isArray(p.reactions) ? p.reactions.length : 0);
+    }, 0);
+
+    // Consider online if last seen within 3 minutes
+    const threeMinutesAgo = new Date(Date.now() - 3 * 60 * 1000);
+    const isOnline = user.isOnline && user.lastSeen > threeMinutesAgo;
+
+    return res.json({
+      user: {
+        pseudonym: user.pseudonym,
+        avatar: user.avatar,
+        isOnline,
+        lastSeen: user.lastSeen,
+        joinedAt: user.createdAt,
+        totalPosts,
+        totalReactions,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
