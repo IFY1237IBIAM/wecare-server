@@ -589,7 +589,7 @@ exports.savePost = async (req, res) => {
 // @route POST /api/posts/:id/comments/:commentId/replies
 exports.addReply = async (req, res) => {
   try {
-    const { text } = req.body;
+    const { text, replyingTo } = req.body;
     if (!text) return res.status(400).json({ message: "Reply text is required" });
 
     const modResult = await analyzeContent(text);
@@ -605,11 +605,10 @@ exports.addReply = async (req, res) => {
     const comment = post.comments.id(req.params.commentId);
     if (!comment) return res.status(404).json({ message: "Comment not found" });
 
-    if (comment.replies && comment.replies.length >= 20) {
-      return res.status(400).json({ message: "Reply limit reached for this comment" });
+    if (comment.replies && comment.replies.length >= 50) {
+      return res.status(400).json({ message: "Reply limit reached" });
     }
 
-    // Check if replier is the post author
     const isPostAuthor = post.author.toString() === req.user._id.toString();
 
     comment.replies.push({
@@ -617,6 +616,7 @@ exports.addReply = async (req, res) => {
       pseudonym: req.user.pseudonym,
       text,
       isPostAuthor,
+      replyingTo: replyingTo || null,
       createdAt: new Date(),
     });
 
@@ -624,7 +624,7 @@ exports.addReply = async (req, res) => {
 
     const newReply = comment.replies[comment.replies.length - 1];
 
-    // Notify comment author if not replying to own comment
+    // Notify comment author
     try {
       if (comment.author.toString() !== req.user._id.toString()) {
         const Notification = require("../models/Notification");
