@@ -40,7 +40,7 @@ const userSchema = new mongoose.Schema(
     // Online status
     lastSeen: { type: Date, default: Date.now },
     isOnline: { type: Boolean, default: false },
-
+    showOnlineStatus: { type: Boolean, default: true },
     // Saved posts
     savedPosts: [{ type: mongoose.Schema.Types.ObjectId, ref: "Post" }],
   },
