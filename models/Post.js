@@ -55,5 +55,7 @@ const postSchema = new mongoose.Schema(
 );
 
 postSchema.index({ createdAt: -1 });
+postSchema.index({ author: 1 });
+postSchema.index({ flagged: 1 });
 
 module.exports = mongoose.model("Post", postSchema);
