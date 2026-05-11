@@ -625,22 +625,22 @@ exports.addReply = async (req, res) => {
     const newReply = comment.replies[comment.replies.length - 1];
 
     // Notify comment author
-    try {
-      if (comment.author.toString() !== req.user._id.toString()) {
-        const Notification = require("../models/Notification");
-        await Notification.create({
-          recipient: comment.author,
-          sender: req.user._id,
-          senderPseudonym: req.user.pseudonym,
-          type: "comment",
-          post: req.params.id,
-          postPreview: post.content?.substring(0, 60),
-          commentText: `Replied: ${text.substring(0, 80)}`,
-        });
-      }
-    } catch (e) {
-      console.log("Reply notification error:", e.message);
-    }
+try {
+  if (comment.author.toString() !== req.user._id.toString()) {
+    const Notification = require("../models/Notification");
+    await Notification.create({
+      recipient: comment.author,
+      sender: req.user._id,
+      senderPseudonym: req.user.pseudonym,
+      type: "reply", // ← changed from "comment" to "reply"
+      post: req.params.id,
+      postPreview: post.content?.substring(0, 60),
+      commentText: text.substring(0, 80),
+    });
+  }
+} catch (e) {
+  console.log("Reply notification error:", e.message);
+}
 
     return res.status(201).json({ message: "Reply added 💜", reply: newReply });
   } catch (error) {
