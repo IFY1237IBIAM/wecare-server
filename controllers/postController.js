@@ -647,3 +647,38 @@ try {
     return res.status(500).json({ message: error.message });
   }
 };
+
+// @route GET /api/posts/search
+exports.searchPosts = async (req, res) => {
+  try {
+    const { q, mood } = req.query;
+    const query = {};
+
+    if (mood && mood !== "all") {
+      query.mood = mood;
+    }
+
+    if (q && q.trim()) {
+      query.content = { $regex: q.trim(), $options: "i" };
+    }
+
+    const posts = await Post.find(query)
+      .sort({ createdAt: -1 })
+      .limit(20)
+      .select("-author");
+
+    const postsWithReactions = posts.map((post) => {
+      const obj = post.toObject();
+      const reactions = Array.isArray(obj.reactions) ? obj.reactions : [];
+      const reactionCounts = {};
+      reactions.forEach((r) => {
+        if (r.type) reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1;
+      });
+      return { ...obj, reactions, reactionCounts, totalReactions: reactions.length };
+    });
+
+    return res.json({ posts: postsWithReactions, count: postsWithReactions.length });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};

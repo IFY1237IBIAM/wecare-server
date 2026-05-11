@@ -1,37 +1,40 @@
 const jwt = require("jsonwebtoken");
-const User = require("../models/User");
 
-// Generate JWT
-const generateToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, {
+const generateToken = (id, role) => {
+  return jwt.sign({ id, role }, process.env.JWT_SECRET, {
     expiresIn: process.env.JWT_EXPIRE,
   });
 };
 
-// @route   POST /api/auth/signup
 exports.signup = async (req, res) => {
   try {
+    const User = require("../models/User");
     const { pseudonym, email, password } = req.body;
 
     if (!pseudonym || !email || !password) {
       return res.status(400).json({ message: "All fields are required" });
     }
 
-    const existingUser = await User.findOne({
-      $or: [{ email }, { pseudonym }],
-    });
-
+    const existingUser = await User.findOne({ $or: [{ email }, { pseudonym }] });
     if (existingUser) {
       return res.status(400).json({
-        message:
-          existingUser.email === email
-            ? "Email already registered"
-            : "Pseudonym already taken",
+        message: existingUser.email === email
+          ? "Email already registered"
+          : "Pseudonym already taken",
       });
     }
 
-    const user = await User.create({ pseudonym, email, password });
-    const token = generateToken(user._id);
+    // Auto-promote admin email from env
+    const isAdmin = process.env.ADMIN_EMAIL && email.toLowerCase() === process.env.ADMIN_EMAIL.toLowerCase();
+
+    const user = await User.create({
+      pseudonym,
+      email,
+      password,
+      role: isAdmin ? "admin" : "user",
+    });
+
+    const token = generateToken(user._id, user.role);
 
     return res.status(201).json({
       message: "Account created successfully! Welcome to WeCare 💜",
@@ -40,6 +43,7 @@ exports.signup = async (req, res) => {
         id: user._id,
         pseudonym: user.pseudonym,
         avatar: user.avatar,
+        role: user.role,
       },
     });
   } catch (error) {
@@ -47,9 +51,9 @@ exports.signup = async (req, res) => {
   }
 };
 
-// @route   POST /api/auth/login
 exports.login = async (req, res) => {
   try {
+    const User = require("../models/User");
     const { email, password } = req.body;
 
     if (!email || !password) {
@@ -57,16 +61,16 @@ exports.login = async (req, res) => {
     }
 
     const user = await User.findOne({ email }).select("+password");
-    if (!user) {
-      return res.status(401).json({ message: "Invalid email or password" });
+    if (!user) return res.status(401).json({ message: "Invalid email or password" });
+
+    if (user.isBanned) {
+      return res.status(403).json({ message: "Your account has been suspended for violating our community guidelines." });
     }
 
     const isMatch = await user.matchPassword(password);
-    if (!isMatch) {
-      return res.status(401).json({ message: "Invalid email or password" });
-    }
+    if (!isMatch) return res.status(401).json({ message: "Invalid email or password" });
 
-    const token = generateToken(user._id);
+    const token = generateToken(user._id, user.role);
 
     return res.json({
       message: "Welcome back 💜",
@@ -75,6 +79,7 @@ exports.login = async (req, res) => {
         id: user._id,
         pseudonym: user.pseudonym,
         avatar: user.avatar,
+        role: user.role,
       },
     });
   } catch (error) {
@@ -82,12 +87,11 @@ exports.login = async (req, res) => {
   }
 };
 
-// @route   GET /api/auth/me
 exports.getMe = async (req, res) => {
   try {
     const User = require("../models/User");
     const user = await User.findById(req.user.id)
-      .select("+showOnlineStatus +isOnline +lastSeen");
+      .select("+showOnlineStatus +isOnline +lastSeen +role");
     if (!user) return res.status(404).json({ message: "User not found" });
     return res.json({ user });
   } catch (error) {
@@ -95,13 +99,10 @@ exports.getMe = async (req, res) => {
   }
 };
 
-// @route GET /api/auth/stats
 exports.getUserStats = async (req, res) => {
   try {
     const Post = require("../models/Post");
-
     const myPosts = await Post.find({ author: req.user._id });
-
     const totalPosts = myPosts.length;
     const totalReactions = myPosts.reduce((sum, post) => {
       return sum + (Array.isArray(post.reactions) ? post.reactions.length : 0);
@@ -109,22 +110,18 @@ exports.getUserStats = async (req, res) => {
     const totalComments = myPosts.reduce((sum, post) => {
       return sum + (post.comments?.length || 0);
     }, 0);
-
     return res.json({ totalPosts, totalReactions, totalComments });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
 };
 
-// @route GET /api/auth/my-posts
 exports.getMyPosts = async (req, res) => {
   try {
     const Post = require("../models/Post");
-
     const posts = await Post.find({ author: req.user._id })
       .sort({ createdAt: -1 })
       .select("-author");
-
     const postsWithReactions = posts.map((post) => {
       const obj = post.toObject();
       const reactions = Array.isArray(obj.reactions) ? obj.reactions : [];
@@ -134,28 +131,21 @@ exports.getMyPosts = async (req, res) => {
       });
       return { ...obj, reactions, reactionCounts, totalReactions: reactions.length };
     });
-
     return res.json({ posts: postsWithReactions });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
 };
 
-// @route GET /api/auth/saved-posts
 exports.getSavedPosts = async (req, res) => {
   try {
     const User = require("../models/User");
     const Post = require("../models/Post");
-
     const user = await User.findById(req.user._id).select("savedPosts");
     if (!user) return res.status(404).json({ message: "User not found" });
-
-    const posts = await Post.find({
-      _id: { $in: user.savedPosts },
-    })
+    const posts = await Post.find({ _id: { $in: user.savedPosts } })
       .sort({ createdAt: -1 })
       .select("-author");
-
     const postsWithReactions = posts.map((post) => {
       const obj = post.toObject();
       const reactions = Array.isArray(obj.reactions) ? obj.reactions : [];
@@ -165,14 +155,12 @@ exports.getSavedPosts = async (req, res) => {
       });
       return { ...obj, reactions, reactionCounts, totalReactions: reactions.length };
     });
-
     return res.json({ posts: postsWithReactions });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
 };
 
-// @route  PUT /api/auth/presence
 exports.updatePresence = async (req, res) => {
   try {
     const User = require("../models/User");
@@ -186,7 +174,6 @@ exports.updatePresence = async (req, res) => {
   }
 };
 
-// @route  PUT /api/auth/offline
 exports.setOffline = async (req, res) => {
   try {
     const User = require("../models/User");
@@ -200,30 +187,40 @@ exports.setOffline = async (req, res) => {
   }
 };
 
-// @route  GET /api/auth/user/:pseudonym
+exports.toggleOnlineStatusPrivacy = async (req, res) => {
+  try {
+    const User = require("../models/User");
+    const user = await User.findById(req.user._id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+    user.showOnlineStatus = !user.showOnlineStatus;
+    await user.save({ validateBeforeSave: false });
+    return res.json({
+      message: user.showOnlineStatus
+        ? "Online status is now visible 💜"
+        : "Online status is now hidden",
+      showOnlineStatus: user.showOnlineStatus,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
 exports.getUserByPseudonym = async (req, res) => {
   try {
     const User = require("../models/User");
     const Post = require("../models/Post");
-
     const user = await User.findOne({ pseudonym: req.params.pseudonym })
       .select("pseudonym avatar isOnline lastSeen createdAt showOnlineStatus");
-
     if (!user) return res.status(404).json({ message: "User not found" });
-
     const posts = await Post.find({ author: user._id });
     const totalPosts = posts.length;
     const totalReactions = posts.reduce((sum, p) => {
       return sum + (Array.isArray(p.reactions) ? p.reactions.length : 0);
     }, 0);
-
     const threeMinutesAgo = new Date(Date.now() - 3 * 60 * 1000);
     const actuallyOnline = user.isOnline && user.lastSeen > threeMinutesAgo;
-
-    // Respect privacy setting
     const isOnline = user.showOnlineStatus ? actuallyOnline : null;
     const lastSeen = user.showOnlineStatus ? user.lastSeen : null;
-
     return res.json({
       user: {
         pseudonym: user.pseudonym,
@@ -235,26 +232,6 @@ exports.getUserByPseudonym = async (req, res) => {
         totalPosts,
         totalReactions,
       },
-    });
-  } catch (error) {
-    return res.status(500).json({ message: error.message });
-  }
-};
-// @route PUT /api/auth/online-status-privacy
-exports.toggleOnlineStatusPrivacy = async (req, res) => {
-  try {
-    const User = require("../models/User");
-    const user = await User.findById(req.user._id);
-    if (!user) return res.status(404).json({ message: "User not found" });
-
-    user.showOnlineStatus = !user.showOnlineStatus;
-    await user.save({ validateBeforeSave: false });
-
-    return res.json({
-      message: user.showOnlineStatus
-        ? "Online status is now visible 💜"
-        : "Online status is now hidden",
-      showOnlineStatus: user.showOnlineStatus,
     });
   } catch (error) {
     return res.status(500).json({ message: error.message });

@@ -4,6 +4,8 @@ const postController = require("../controllers/postController");
 const { protect } = require("../middleware/authMiddleware");
 const Post = require("../models/Post");
 
+
+router.get("/search", protect, postController.searchPosts);
 router.get("/migrate/fix-reactions", async (req, res) => {
   try {
     const posts = await Post.find({});

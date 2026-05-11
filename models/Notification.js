@@ -7,18 +7,19 @@ const notificationSchema = new mongoose.Schema(
     senderPseudonym: { type: String, required: true },
     type: {
       type: String,
-      enum: ["reaction", "comment", "reply"], // ← added "reply"
+      enum: ["reaction", "comment", "reply", "warning", "ban", "post_removed"],
       required: true,
     },
-    post: { type: mongoose.Schema.Types.ObjectId, ref: "Post", required: true },
+    post: { type: mongoose.Schema.Types.ObjectId, ref: "Post" },
     postPreview: { type: String },
     reactionType: { type: String },
     commentText: { type: String },
+    adminMessage: { type: String },
     read: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
 
 notificationSchema.index({ recipient: 1, createdAt: -1 });
-notificationSchema.index({ recipient: 1, read: 1 });
+
 module.exports = mongoose.model("Notification", notificationSchema);
