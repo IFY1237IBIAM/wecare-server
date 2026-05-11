@@ -15,6 +15,11 @@ const notificationSchema = new mongoose.Schema(
     reactionType: { type: String },
     commentText: { type: String },
     adminMessage: { type: String },
+    adminReason: { type: String },
+    nextStep: { type: String },
+    violationCount: { type: Number },
+    isBanNotification: { type: Boolean, default: false },
+    isUnban: { type: Boolean, default: false },
     read: { type: Boolean, default: false },
   },
   { timestamps: true }

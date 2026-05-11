@@ -41,6 +41,7 @@ const userSchema = new mongoose.Schema(
     showOnlineStatus: { type: Boolean, default: true },
     savedPosts: [{ type: mongoose.Schema.Types.ObjectId, ref: "Post" }],
     reportCount: { type: Number, default: 0 },
+    confirmedViolations: { type: Number, default: 0 },
     isBanned: { type: Boolean, default: false },
   },
   { timestamps: true }

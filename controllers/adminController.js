@@ -60,37 +60,53 @@ exports.deleteReportedPost = async (req, res) => {
 
     const postAuthor = await User.findById(post.author);
 
-    // Increment report count on user
-    if (postAuthor) {
-      postAuthor.reportCount = (postAuthor.reportCount || 0) + 1;
+    let userBanned = false;
+    let newViolationCount = 0;
 
-      // Ban user if report count hits 3
-      if (postAuthor.reportCount >= 3) {
+    if (postAuthor) {
+      // Increment confirmed violations — only admin confirms violations
+      postAuthor.confirmedViolations = (postAuthor.confirmedViolations || 0) + 1;
+      newViolationCount = postAuthor.confirmedViolations;
+
+      // Auto-ban only after 3 confirmed admin-actioned violations
+      if (postAuthor.confirmedViolations >= 3 && !postAuthor.isBanned) {
         postAuthor.isBanned = true;
+        userBanned = true;
       }
 
       await postAuthor.save({ validateBeforeSave: false });
 
-      // Notify user
+      // Create popup notification — type post_removed — user sees this as popup on next login
       if (notifyUser !== false) {
-        const isBanned = postAuthor.isBanned;
-        const systemUser = { _id: req.user._id };
+        const violationNum = postAuthor.confirmedViolations;
+        let adminMessage = "";
+        let nextStep = "";
+
+        if (userBanned) {
+          adminMessage = `Your account has been suspended from WeCare.`;
+          nextStep = `After 3 confirmed violations of our community guidelines, your account has been permanently suspended. You can no longer post, comment, or interact on WeCare. If you believe this is a mistake, please contact our support team.`;
+        } else {
+          adminMessage = `One of your posts has been removed by our moderation team.`;
+          nextStep = `This is violation ${violationNum} of 3. After 3 confirmed violations, your account will be automatically suspended. Please review our community guidelines to avoid further action.`;
+        }
 
         await Notification.create({
           recipient: post.author,
           sender: req.user._id,
           senderPseudonym: "WeCare Team",
           type: "post_removed",
-          postPreview: post.content?.substring(0, 60),
-          adminMessage: isBanned
-            ? `Your post was removed and your account has been suspended for repeatedly violating our community guidelines. Reason: ${reason || "Community guideline violation"}`
-            : `Your post was removed by our moderation team. Reason: ${reason || "Community guideline violation"}. This is violation ${postAuthor.reportCount} of 3. Continued violations may result in account suspension.`,
+          postPreview: post.content?.substring(0, 80),
+          adminMessage,
+          adminReason: reason || "Community guideline violation",
+          nextStep,
+          violationCount: violationNum,
+          isBanNotification: userBanned,
           read: false,
         });
       }
     }
 
-    // Mark all reports as actioned
+    // Mark reports as actioned
     await Report.updateMany({ post: postId }, { status: "actioned" });
 
     // Log admin action
@@ -101,7 +117,7 @@ exports.deleteReportedPost = async (req, res) => {
       targetPost: postId,
       targetUser: post.author,
       reason: reason || "Community guideline violation",
-      reportCount: postAuthor?.reportCount,
+      reportCount: newViolationCount,
     });
 
     // Delete the post
@@ -109,8 +125,8 @@ exports.deleteReportedPost = async (req, res) => {
 
     return res.json({
       message: "Post deleted and user notified 💜",
-      userBanned: postAuthor?.isBanned || false,
-      userReportCount: postAuthor?.reportCount || 0,
+      userBanned,
+      violationCount: newViolationCount,
     });
   } catch (error) {
     return res.status(500).json({ message: error.message });
@@ -139,6 +155,67 @@ exports.dismissReport = async (req, res) => {
   }
 };
 
+// @route POST /api/admin/unban-user
+exports.unbanUser = async (req, res) => {
+  try {
+    const { pseudonym, resetViolations } = req.body;
+    if (!pseudonym) return res.status(400).json({ message: "Pseudonym required" });
+
+    const user = await User.findOne({ pseudonym });
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    user.isBanned = false;
+    if (resetViolations) {
+      user.confirmedViolations = 0;
+    }
+
+    await user.save({ validateBeforeSave: false });
+
+    // Notify user they are unbanned
+    await Notification.create({
+      recipient: user._id,
+      sender: req.user._id,
+      senderPseudonym: "WeCare Team",
+      type: "post_removed",
+      adminMessage: "Your account has been reinstated.",
+      adminReason: "Account reinstated by moderation team",
+      nextStep: "Welcome back to WeCare 💜. Your account has been reinstated. Please ensure you follow our community guidelines going forward. We are glad to have you back.",
+      violationCount: user.confirmedViolations,
+      isBanNotification: false,
+      isUnban: true,
+      read: false,
+    });
+
+    await AdminAction.create({
+      admin: req.user._id,
+      adminPseudonym: req.user.pseudonym,
+      action: "ban_user",
+      targetUser: user._id,
+      reason: `Unbanned${resetViolations ? " and violations reset" : ""}`,
+    });
+
+    return res.json({
+      message: `${pseudonym} has been unbanned`,
+      violationsReset: resetViolations,
+      currentViolations: user.confirmedViolations,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+// @route GET /api/admin/user-info/:pseudonym
+exports.getUserInfo = async (req, res) => {
+  try {
+    const user = await User.findOne({ pseudonym: req.params.pseudonym })
+      .select("pseudonym email role isBanned confirmedViolations createdAt lastSeen");
+    if (!user) return res.status(404).json({ message: "User not found" });
+    return res.json({ user });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
 // @route GET /api/admin/actions
 exports.getAdminActions = async (req, res) => {
   try {
@@ -159,14 +236,7 @@ exports.getAdminStats = async (req, res) => {
     const totalPosts = await Post.countDocuments();
     const pendingReports = await Report.countDocuments({ status: "pending" });
     const totalActions = await AdminAction.countDocuments();
-
-    return res.json({
-      totalUsers,
-      bannedUsers,
-      totalPosts,
-      pendingReports,
-      totalActions,
-    });
+    return res.json({ totalUsers, bannedUsers, totalPosts, pendingReports, totalActions });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }

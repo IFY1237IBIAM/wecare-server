@@ -8,6 +8,8 @@ router.use(protect, adminOnly);
 router.get("/reported-posts", adminController.getReportedPosts);
 router.post("/delete-post", adminController.deleteReportedPost);
 router.post("/dismiss-report", adminController.dismissReport);
+router.post("/unban-user", adminController.unbanUser);
+router.get("/user-info/:pseudonym", adminController.getUserInfo);
 router.get("/actions", adminController.getAdminActions);
 router.get("/stats", adminController.getAdminStats);
 
