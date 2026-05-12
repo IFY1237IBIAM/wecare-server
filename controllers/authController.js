@@ -44,6 +44,7 @@ exports.signup = async (req, res) => {
         pseudonym: user.pseudonym,
         avatar: user.avatar,
         role: user.role,
+        isBanned: user.isBanned,
       },
     });
   } catch (error) {
@@ -56,30 +57,31 @@ exports.login = async (req, res) => {
     const User = require("../models/User");
     const { email, password } = req.body;
 
-    if (!email || !password) {
+    if (!email ||!password) {
       return res.status(400).json({ message: "All fields are required" });
     }
 
     const user = await User.findOne({ email }).select("+password");
     if (!user) return res.status(401).json({ message: "Invalid email or password" });
 
-    if (user.isBanned) {
-      return res.status(403).json({ message: "Your account has been suspended for violating our community guidelines." });
-    }
-
     const isMatch = await user.matchPassword(password);
     if (!isMatch) return res.status(401).json({ message: "Invalid email or password" });
 
     const token = generateToken(user._id, user.role);
 
+    // Return user data even if banned so frontend can show BanScreen
     return res.json({
-      message: "Welcome back 💜",
+      message: user.isBanned? "Account suspended" : "Welcome back 💜",
       token,
       user: {
         id: user._id,
         pseudonym: user.pseudonym,
         avatar: user.avatar,
         role: user.role,
+        isBanned: user.isBanned,
+        violations: user.violations || [],
+        appealStatus: user.appealStatus || "none",
+        confirmedViolations: user.confirmedViolations || 0
       },
     });
   } catch (error) {

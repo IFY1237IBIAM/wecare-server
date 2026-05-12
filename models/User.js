@@ -43,8 +43,18 @@ const userSchema = new mongoose.Schema(
     reportCount: { type: Number, default: 0 },
     confirmedViolations: { type: Number, default: 0 },
     isBanned: { type: Boolean, default: false },
+    violations: {
+      type: [String],
+      default: []
+    },
+    appealStatus: {
+      type: String,
+      enum: ["none", "pending", "rejected", "accepted"],
+      default: "none"
+    },
   },
   { timestamps: true }
+  
 );
 
 function getRandomColor() {
