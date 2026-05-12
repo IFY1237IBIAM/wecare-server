@@ -141,11 +141,11 @@ exports.deleteReportedPost = async (req, res) => {
 // @route GET /api/admin/banned-users
 exports.getBannedUsers = async (req, res) => {
   try {
+    const Appeal = require("../models/Appeal");
     const bannedUsers = await User.find({ isBanned: true })
       .select("pseudonym email confirmedViolations createdAt lastSeen isBanned")
       .sort({ updatedAt: -1 });
 
-    // Enrich with latest admin action per user
     const enriched = await Promise.all(
       bannedUsers.map(async (user) => {
         const lastAction = await AdminAction.findOne({
@@ -154,6 +154,16 @@ exports.getBannedUsers = async (req, res) => {
         })
           .sort({ createdAt: -1 })
           .select("reason createdAt adminPseudonym");
+
+        const rejectedAppeal = await Appeal.findOne({
+          user: user._id,
+          status: "rejected",
+        });
+
+        const pendingAppeal = await Appeal.findOne({
+          user: user._id,
+          status: "pending",
+        });
 
         return {
           _id: user._id,
@@ -164,6 +174,8 @@ exports.getBannedUsers = async (req, res) => {
           lastViolationReason: lastAction?.reason || "Community guideline violation",
           lastViolationDate: lastAction?.createdAt,
           bannedBy: lastAction?.adminPseudonym || "System",
+          hasRejectedAppeal: !!rejectedAppeal,
+          hasPendingAppeal: !!pendingAppeal,
         };
       })
     );
@@ -251,7 +263,25 @@ exports.getUserInfo = async (req, res) => {
     const user = await User.findOne({ pseudonym: req.params.pseudonym })
       .select("pseudonym email role isBanned confirmedViolations createdAt lastSeen");
     if (!user) return res.status(404).json({ message: "User not found" });
-    return res.json({ user });
+
+    // Recent activity — last 5 admin actions on this user
+    const recentActivity = await AdminAction.find({ targetUser: user._id })
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .select("action reason createdAt adminPseudonym");
+
+    // Check if rejected appeal exists
+    const Appeal = require("../models/Appeal");
+    const rejectedAppeal = await Appeal.findOne({
+      user: user._id,
+      status: "rejected",
+    });
+
+    return res.json({
+      user,
+      recentActivity,
+      hasRejectedAppeal: !!rejectedAppeal,
+    });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }

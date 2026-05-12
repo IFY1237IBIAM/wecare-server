@@ -30,7 +30,7 @@ app.use("/api/posts", require("./routes/postRoutes"));
 app.use("/api/notifications", require("./routes/notificationRoutes"));
 app.use("/api/admin", require("./routes/adminRoutes"));
 app.use("/api/checkin", require("./routes/checkInRoutes"));
-
+app.use("/api/appeals", require("./routes/appealRoutes"));
 // Apply rate limiting only on login
 app.use("/api/auth/login", loginLimiter);
 
