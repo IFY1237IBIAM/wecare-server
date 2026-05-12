@@ -64,11 +64,19 @@ exports.deleteReportedPost = async (req, res) => {
     let newViolationCount = 0;
 
     if (postAuthor) {
-      // Increment confirmed violations — only admin confirms violations
-      postAuthor.confirmedViolations = (postAuthor.confirmedViolations || 0) + 1;
+      // Only count violation if this post hasn't been counted before
+      const alreadyCounted = await AdminAction.findOne({
+        targetPost: postId,
+        action: "delete_post",
+      });
+
+      if (!alreadyCounted) {
+        postAuthor.confirmedViolations = (postAuthor.confirmedViolations || 0) + 1;
+      }
+
       newViolationCount = postAuthor.confirmedViolations;
 
-      // Auto-ban only after 3 confirmed admin-actioned violations
+      // Auto-ban only after 3 confirmed violations across different posts
       if (postAuthor.confirmedViolations >= 3 && !postAuthor.isBanned) {
         postAuthor.isBanned = true;
         userBanned = true;
@@ -76,7 +84,6 @@ exports.deleteReportedPost = async (req, res) => {
 
       await postAuthor.save({ validateBeforeSave: false });
 
-      // Create popup notification — type post_removed — user sees this as popup on next login
       if (notifyUser !== false) {
         const violationNum = postAuthor.confirmedViolations;
         let adminMessage = "";
@@ -101,15 +108,14 @@ exports.deleteReportedPost = async (req, res) => {
           nextStep,
           violationCount: violationNum,
           isBanNotification: userBanned,
+          isUnban: false,
           read: false,
         });
       }
     }
 
-    // Mark reports as actioned
     await Report.updateMany({ post: postId }, { status: "actioned" });
 
-    // Log admin action
     await AdminAction.create({
       admin: req.user._id,
       adminPseudonym: req.user.pseudonym,
@@ -120,7 +126,6 @@ exports.deleteReportedPost = async (req, res) => {
       reportCount: newViolationCount,
     });
 
-    // Delete the post
     await post.deleteOne();
 
     return res.json({
@@ -128,6 +133,42 @@ exports.deleteReportedPost = async (req, res) => {
       userBanned,
       violationCount: newViolationCount,
     });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+// @route GET /api/admin/banned-users
+exports.getBannedUsers = async (req, res) => {
+  try {
+    const bannedUsers = await User.find({ isBanned: true })
+      .select("pseudonym email confirmedViolations createdAt lastSeen isBanned")
+      .sort({ updatedAt: -1 });
+
+    // Enrich with latest admin action per user
+    const enriched = await Promise.all(
+      bannedUsers.map(async (user) => {
+        const lastAction = await AdminAction.findOne({
+          targetUser: user._id,
+          action: "delete_post",
+        })
+          .sort({ createdAt: -1 })
+          .select("reason createdAt adminPseudonym");
+
+        return {
+          _id: user._id,
+          pseudonym: user.pseudonym,
+          confirmedViolations: user.confirmedViolations || 0,
+          createdAt: user.createdAt,
+          lastSeen: user.lastSeen,
+          lastViolationReason: lastAction?.reason || "Community guideline violation",
+          lastViolationDate: lastAction?.createdAt,
+          bannedBy: lastAction?.adminPseudonym || "System",
+        };
+      })
+    );
+
+    return res.json({ bannedUsers: enriched });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }

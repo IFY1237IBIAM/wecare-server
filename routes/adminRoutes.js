@@ -6,11 +6,12 @@ const { protect, adminOnly } = require("../middleware/authMiddleware");
 router.use(protect, adminOnly);
 
 router.get("/reported-posts", adminController.getReportedPosts);
-router.post("/delete-post", adminController.deleteReportedPost);
-router.post("/dismiss-report", adminController.dismissReport);
-router.post("/unban-user", adminController.unbanUser);
+router.get("/banned-users", adminController.getBannedUsers);
 router.get("/user-info/:pseudonym", adminController.getUserInfo);
 router.get("/actions", adminController.getAdminActions);
 router.get("/stats", adminController.getAdminStats);
+router.post("/delete-post", adminController.deleteReportedPost);
+router.post("/dismiss-report", adminController.dismissReport);
+router.post("/unban-user", adminController.unbanUser);
 
 module.exports = router;
