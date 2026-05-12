@@ -12,7 +12,9 @@ exports.protect = async (req, res, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const user = await User.findById(decoded.id);
     if (!user) return res.status(401).json({ message: "User no longer exists" });
-    if (user.isBanned) return res.status(403).json({ message: "Account suspended" });
+
+    // Remove this line - let routes handle banned users
+    // if (user.isBanned) return res.status(403).json({ message: "Account suspended" });
 
     req.user = {
       _id: user._id,
@@ -20,6 +22,7 @@ exports.protect = async (req, res, next) => {
       pseudonym: user.pseudonym,
       email: user.email,
       role: user.role,
+      isBanned: user.isBanned // pass it through so routes can check
     };
 
     next();
@@ -29,7 +32,7 @@ exports.protect = async (req, res, next) => {
 };
 
 exports.adminOnly = (req, res, next) => {
-  if (req.user?.role !== "admin" && req.user?.role !== "moderator") {
+  if (req.user?.role!== "admin" && req.user?.role!== "moderator") {
     return res.status(403).json({ message: "Admin access required" });
   }
   next();
