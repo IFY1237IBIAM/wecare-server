@@ -60,14 +60,14 @@ router.post("/", protect, async (req, res) => {
 });
 
 // GET /api/appeals/mine — only return pending appeal for current user
+// GET /api/appeals/mine — return latest appeal for current user
 router.get("/mine", protect, async (req, res) => {
   try {
     const userId = req.user._id;
     
     const appeal = await Appeal.findOne({ 
-      user: userId,
-      status: "pending" 
-    }).sort({ createdAt: -1 });
+      user: userId
+    }).sort({ createdAt: -1 }); // get the most recent one
 
     return res.json({ appeal: appeal || null });
   } catch (error) {
