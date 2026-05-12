@@ -6,22 +6,22 @@ const User = require("../models/User");
 const AdminAction = require("../models/AdminAction");
 const Notification = require("../models/Notification");
 
-// POST /api/appeals — submit appeal (user)
-router.post("/", protect, async (req, res) => {
+// POST /api/appeals — submit appeal (user) - NO protect
+router.post("/", async (req, res) => {
   try {
-    const { message, banId } = req.body;
+    const { message, userId } = req.body; // use userId, not req.user
     if (!message?.trim()) {
       return res.status(400).json({ message: "Appeal message is required" });
     }
 
-    const user = await User.findById(req.user._id);
+    const user = await User.findById(userId);
     if (!user) return res.status(404).json({ message: "User not found" });
     if (!user.isBanned) {
       return res.status(400).json({ message: "You are not currently banned" });
     }
 
     // Check 1 appeal per ban
-    const existing = await Appeal.findOne({ user: req.user._id, banId });
+    const existing = await Appeal.findOne({ user: userId, status: "pending" });
     if (existing) {
       return res.status(400).json({
         message: "You have already submitted an appeal for this ban",
@@ -29,9 +29,8 @@ router.post("/", protect, async (req, res) => {
       });
     }
 
-    // Get violation history for context
     const violations = await AdminAction.find({
-      targetUser: req.user._id,
+      targetUser: userId,
       action: "delete_post",
     })
       .sort({ createdAt: -1 })
@@ -39,14 +38,13 @@ router.post("/", protect, async (req, res) => {
       .select("reason createdAt");
 
     const appeal = await Appeal.create({
-      user: req.user._id,
-      pseudonym: req.user.pseudonym,
+      user: userId,
+      pseudonym: user.pseudonym,
       message: message.trim(),
       violations: violations.map((v) => ({
         reason: v.reason,
         date: v.createdAt,
       })),
-      banId: banId || `ban_${req.user._id}`,
       status: "pending",
     });
 
@@ -59,28 +57,21 @@ router.post("/", protect, async (req, res) => {
   }
 });
 
-// GET /api/appeals — list all appeals (admin)
-router.get("/", protect, adminOnly, async (req, res) => {
+// GET /api/appeals/mine — NO protect
+router.get("/mine", async (req, res) => {
   try {
-    const appeals = await Appeal.find()
-      .sort({ createdAt: -1 })
-      .limit(50);
-    return res.json({ appeals });
-  } catch (error) {
-    return res.status(500).json({ message: error.message });
-  }
-});
-
-// GET /api/appeals/mine — check user's own appeal
-router.get("/mine", protect, async (req, res) => {
-  try {
-    const appeal = await Appeal.findOne({ user: req.user._id })
+    const { userId } = req.query; // send userId as query param
+    if (!userId) return res.json({ appeal: null });
+    
+    const appeal = await Appeal.findOne({ user: userId })
       .sort({ createdAt: -1 });
     return res.json({ appeal: appeal || null });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
 });
+
+
 
 // PATCH /api/appeals/:id — accept or reject (admin)
 router.patch("/:id", protect, adminOnly, async (req, res) => {

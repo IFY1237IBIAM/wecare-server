@@ -17,10 +17,14 @@ const appealSchema = new mongoose.Schema(
     reviewedAt: { type: Date },
     banId: { type: String }, // unique ID per ban event to enforce 1 appeal per ban
     appealRejected: { type: Boolean, default: false },
+    
   },
   { timestamps: true }
 );
 
 appealSchema.index({ user: 1, banId: 1 });
-
+appealSchema.index({ user: 1 }, { 
+  unique: true, 
+  partialFilterExpression: { status: "pending" } 
+});
 module.exports = mongoose.model("Appeal", appealSchema);
