@@ -3,6 +3,7 @@ const Report = require("../models/Report");
 const User = require("../models/User");
 const Notification = require("../models/Notification");
 const AdminAction = require("../models/AdminAction");
+const Appeal = require("../models/Appeal");
 
 // @route GET /api/admin/reported-posts
 exports.getReportedPosts = async (req, res) => {
@@ -25,7 +26,8 @@ exports.getReportedPosts = async (req, res) => {
 
     const enriched = await Promise.all(
       reports.map(async (r) => {
-        const post = await Post.findById(r._id).select("content mood pseudonym flagged flagType createdAt");
+        const post = await Post.findById(r._id)
+          .select("content mood pseudonym flagged flagType createdAt");
         const reasonCounts = r.reasons.reduce((acc, reason) => {
           acc[reason] = (acc[reason] || 0) + 1;
           return acc;
@@ -64,7 +66,6 @@ exports.deleteReportedPost = async (req, res) => {
     let newViolationCount = 0;
 
     if (postAuthor) {
-      // Only count violation if this post hasn't been counted before
       const alreadyCounted = await AdminAction.findOne({
         targetPost: postId,
         action: "delete_post",
@@ -76,7 +77,6 @@ exports.deleteReportedPost = async (req, res) => {
 
       newViolationCount = postAuthor.confirmedViolations;
 
-      // Auto-ban only after 3 confirmed violations across different posts
       if (postAuthor.confirmedViolations >= 3 && !postAuthor.isBanned) {
         postAuthor.isBanned = true;
         userBanned = true;
@@ -91,7 +91,7 @@ exports.deleteReportedPost = async (req, res) => {
 
         if (userBanned) {
           adminMessage = `Your account has been suspended from WeCare.`;
-          nextStep = `After 3 confirmed violations of our community guidelines, your account has been permanently suspended. You can no longer post, comment, or interact on WeCare. If you believe this is a mistake, please contact our support team.`;
+          nextStep = `After 3 confirmed violations of our community guidelines, your account has been permanently suspended. You can no longer post, comment, or interact on WeCare. If you believe this is a mistake, please submit an appeal.`;
         } else {
           adminMessage = `One of your posts has been removed by our moderation team.`;
           nextStep = `This is violation ${violationNum} of 3. After 3 confirmed violations, your account will be automatically suspended. Please review our community guidelines to avoid further action.`;
@@ -141,7 +141,6 @@ exports.deleteReportedPost = async (req, res) => {
 // @route GET /api/admin/banned-users
 exports.getBannedUsers = async (req, res) => {
   try {
-    const Appeal = require("../models/Appeal");
     const bannedUsers = await User.find({ isBanned: true })
       .select("pseudonym email confirmedViolations createdAt lastSeen isBanned")
       .sort({ updatedAt: -1 });
@@ -224,7 +223,6 @@ exports.unbanUser = async (req, res) => {
 
     await user.save({ validateBeforeSave: false });
 
-    // Notify user they are unbanned
     await Notification.create({
       recipient: user._id,
       sender: req.user._id,
@@ -264,14 +262,11 @@ exports.getUserInfo = async (req, res) => {
       .select("pseudonym email role isBanned confirmedViolations createdAt lastSeen");
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    // Recent activity — last 5 admin actions on this user
     const recentActivity = await AdminAction.find({ targetUser: user._id })
       .sort({ createdAt: -1 })
       .limit(5)
       .select("action reason createdAt adminPseudonym");
 
-    // Check if rejected appeal exists
-    const Appeal = require("../models/Appeal");
     const rejectedAppeal = await Appeal.findOne({
       user: user._id,
       status: "rejected",
