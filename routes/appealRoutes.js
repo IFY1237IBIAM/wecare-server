@@ -6,10 +6,12 @@ const User = require("../models/User");
 const AdminAction = require("../models/AdminAction");
 const Notification = require("../models/Notification");
 
-// POST /api/appeals — submit appeal (user) - NO protect
-router.post("/", async (req, res) => {
+// POST /api/appeals — submit appeal (user)
+router.post("/", protect, async (req, res) => {
   try {
-    const { message, userId } = req.body; // use userId, not req.user
+    const { message } = req.body;
+    const userId = req.user._id;
+
     if (!message?.trim()) {
       return res.status(400).json({ message: "Appeal message is required" });
     }
@@ -20,7 +22,7 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ message: "You are not currently banned" });
     }
 
-    // Check 1 appeal per ban
+    // Check 1 pending appeal per ban
     const existing = await Appeal.findOne({ user: userId, status: "pending" });
     if (existing) {
       return res.status(400).json({
@@ -57,21 +59,21 @@ router.post("/", async (req, res) => {
   }
 });
 
-// GET /api/appeals/mine — NO protect
-router.get("/mine", async (req, res) => {
+// GET /api/appeals/mine — only return pending appeal for current user
+router.get("/mine", protect, async (req, res) => {
   try {
-    const { userId } = req.query; // send userId as query param
-    if (!userId) return res.json({ appeal: null });
+    const userId = req.user._id;
     
-    const appeal = await Appeal.findOne({ user: userId })
-      .sort({ createdAt: -1 });
+    const appeal = await Appeal.findOne({ 
+      user: userId,
+      status: "pending" 
+    }).sort({ createdAt: -1 });
+
     return res.json({ appeal: appeal || null });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
 });
-
-
 
 // PATCH /api/appeals/:id — accept or reject (admin)
 router.patch("/:id", protect, adminOnly, async (req, res) => {
@@ -98,12 +100,10 @@ router.patch("/:id", protect, adminOnly, async (req, res) => {
     const user = await User.findById(appeal.user);
 
     if (action === "accepted" && user) {
-      // Auto unban + reset violations
       user.isBanned = false;
       user.confirmedViolations = 0;
       await user.save({ validateBeforeSave: false });
 
-      // Notify user
       await Notification.create({
         recipient: appeal.user,
         sender: req.user._id,
@@ -111,7 +111,7 @@ router.patch("/:id", protect, adminOnly, async (req, res) => {
         type: "post_removed",
         adminMessage: "Your appeal has been accepted.",
         adminReason: "Appeal accepted by moderation team",
-        nextStep: `Welcome back to WeCare 💜. Your ban has been lifted and your violation record has been reset. Please review our community guidelines to ensure this doesn't happen again. We're glad to have you back.`,
+        nextStep: `Welcome back to WeCare 💜. Your ban has been lifted and your violation record has been reset.`,
         violationCount: 0,
         isBanNotification: false,
         isUnban: true,
@@ -126,7 +126,6 @@ router.patch("/:id", protect, adminOnly, async (req, res) => {
         reason: `Appeal accepted — user unbanned and violations reset`,
       });
     } else if (action === "rejected" && user) {
-      // Notify user appeal was rejected
       await Notification.create({
         recipient: appeal.user,
         sender: req.user._id,
@@ -134,7 +133,7 @@ router.patch("/:id", protect, adminOnly, async (req, res) => {
         type: "post_removed",
         adminMessage: "Your appeal has been rejected.",
         adminReason: reviewNote || "Appeal does not meet criteria for reinstatement",
-        nextStep: `After careful review by our moderation team, we have decided to uphold the suspension. This decision is final. Your account will remain suspended. If you believe there has been an error, please contact our support team directly.`,
+        nextStep: `After careful review, we have decided to uphold the suspension. This decision is final.`,
         violationCount: user.confirmedViolations,
         isBanNotification: true,
         isUnban: false,
