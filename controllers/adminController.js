@@ -307,3 +307,13 @@ exports.getAdminStats = async (req, res) => {
     return res.status(500).json({ message: error.message });
   }
 };
+
+// @route GET /api/admin/appeals
+exports.getAppeals = async (req, res) => {
+  try {
+    const appeals = await Appeal.find().sort({ createdAt: -1 }).limit(50);
+    res.json({ appeals });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};

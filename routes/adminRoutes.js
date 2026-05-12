@@ -9,6 +9,7 @@ router.get("/reported-posts", adminController.getReportedPosts);
 router.get("/banned-users", adminController.getBannedUsers);
 router.get("/user-info/:pseudonym", adminController.getUserInfo);
 router.get("/actions", adminController.getAdminActions);
+router.get("/appeals", adminController.getAppeals);
 router.get("/stats", adminController.getAdminStats);
 router.post("/delete-post", adminController.deleteReportedPost);
 router.post("/dismiss-report", adminController.dismissReport);
