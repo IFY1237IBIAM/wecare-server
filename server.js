@@ -13,7 +13,6 @@ app.use(helmet());
 app.use(cors());
 app.use(express.json());
 
-// Rate limit login
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
@@ -21,18 +20,33 @@ const loginLimiter = rateLimit({
   skipSuccessfulRequests: true,
 });
 
+const groupLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  max: 10,
+  message: { message: "Slow down. You're posting too fast." },
+});
+
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok", uptime: process.uptime() });
 });
 
+app.use("/api/auth/login", loginLimiter);
 app.use("/api/auth", require("./routes/authRoutes"));
 app.use("/api/posts", require("./routes/postRoutes"));
 app.use("/api/notifications", require("./routes/notificationRoutes"));
 app.use("/api/admin", require("./routes/adminRoutes"));
 app.use("/api/checkin", require("./routes/checkInRoutes"));
+app.use("/api/groups", groupLimiter, require("./routes/groupRoutes"));
 app.use("/api/appeals", require("./routes/appealRoutes"));
-// Apply rate limiting only on login
-app.use("/api/auth/login", loginLimiter);
+
+// Error handler
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ 
+    message: "Server error", 
+    error: process.env.NODE_ENV === 'development' ? err.message : undefined 
+  });
+});
 
 app.use((req, res) => {
   res.status(404).json({ message: "Route not found" });
