@@ -5,6 +5,7 @@ const Notification = require("../models/Notification");
 const NotificationToken = require("../models/NotificationToken");
 
 // Save push token - supports multiple devices per user
+// Save push token - supports multiple devices per user
 router.post("/token", protect, async (req, res) => {
   try {
     const { expoPushToken, platform } = req.body;
@@ -13,15 +14,15 @@ router.post("/token", protect, async (req, res) => {
       return res.status(400).json({ message: "Token required" });
     }
 
-    // Validate Expo token format
     if (!expoPushToken.startsWith("ExponentPushToken[") && !expoPushToken.startsWith("ExpoPushToken[")) {
       return res.status(400).json({ message: "Invalid push token" });
     }
 
     await NotificationToken.findOneAndUpdate(
-      { user: req.user._id, expoPushToken },
+      { expoPushToken }, // match only on token
       { 
         expoPushToken, 
+        user: req.user._id, // set/update the owner
         platform: platform || "android",
         lastUsedAt: new Date()
       },
@@ -30,6 +31,10 @@ router.post("/token", protect, async (req, res) => {
 
     return res.json({ message: "Token saved 💜" });
   } catch (e) {
+    // Handle race condition where 2 requests hit at same time
+    if (e.code === 11000) {
+      return res.json({ message: "Token already saved" });
+    }
     return res.status(500).json({ message: e.message });
   }
 });

@@ -275,94 +275,68 @@ exports.reactToPost = async (req, res) => {
 };
 
 // @route  POST /api/posts/:id/comments
+// @route  POST /api/posts/:id/comments
 exports.addComment = async (req, res) => {
   try {
     const { text } = req.body;
 
     if (!text) {
-      return res.status(400).json({
-        message: "Comment text is required",
-      });
+      return res.status(400).json({ message: "Comment text is required" });
     }
 
     const modResult = await analyzeContent(text);
 
     if (modResult.autoReject) {
       return res.status(400).json({
-        message:
-          "Your comment contains content that violates our community guidelines.",
+        message: "Your comment contains content that violates our community guidelines.",
       });
     }
 
     const post = await Post.findById(req.params.id);
-
     if (!post) {
-      return res.status(404).json({
-        message: "Post not found",
-      });
+      return res.status(404).json({ message: "Post not found" });
     }
 
     if (post.comments.length >= 50) {
-      return res.status(400).json({
-        message: "Comment limit reached",
-      });
+      return res.status(400).json({ message: "Comment limit reached" });
     }
 
     const updated = await Post.findByIdAndUpdate(
-  req.params.id,
-  {
-    $push: {
-      comments: {
-        author: req.user._id,
-        pseudonym: req.user.pseudonym,
-        text,
-        isPostAuthor: post.author.toString() === req.user._id.toString(),
-        createdAt: new Date(),
+      req.params.id,
+      {
+        $push: {
+          comments: {
+            author: req.user._id,
+            pseudonym: req.user.pseudonym,
+            text,
+            parentId: null, // <-- add this
+            isPostAuthor: post.author.toString() === req.user._id.toString(),
+            createdAt: new Date(),
+          },
+        },
       },
-    },
-  },
-  { new: true, runValidators: false }
-);
+      { new: true, runValidators: false }
+    );
 
-    const newComment =
-      updated.comments[
-        updated.comments.length - 1
-      ];
+    const newComment = updated.comments[updated.comments.length - 1];
 
     // Create notification for post author
     try {
-      const freshPost = await Post.findById(
-        req.params.id
-      ).select("author content");
+      const freshPost = await Post.findById(req.params.id).select("author content");
 
-      if (
-        freshPost &&
-        freshPost.author.toString() !==
-          req.user._id.toString()
-      ) {
+      if (freshPost && freshPost.author.toString() !== req.user._id.toString()) {
         await Notification.create({
           recipient: freshPost.author,
           sender: req.user._id,
-          senderPseudonym:
-            req.user.pseudonym,
+          senderPseudonym: req.user.pseudonym,
           type: "comment",
           post: req.params.id,
-          postPreview:
-            freshPost.content?.substring(
-              0,
-              60
-            ),
-          commentText: text.substring(
-            0,
-            100
-          ),
+          postPreview: freshPost.content?.substring(0, 60),
+          commentText: text.substring(0, 100),
         });
       }
     } catch (e) {
-      console.log(
-        "Notification error:",
-        e.message
-      );
+      console.log("Notification error:", e.message);
     }
 
     return res.status(201).json({
@@ -370,9 +344,7 @@ exports.addComment = async (req, res) => {
       comment: newComment,
     });
   } catch (error) {
-    return res.status(500).json({
-      message: error.message,
-    });
+    return res.status(500).json({ message: error.message });
   }
 };
 
@@ -587,6 +559,7 @@ exports.savePost = async (req, res) => {
 };
 
 // @route POST /api/posts/:id/comments/:commentId/replies
+// @route POST /api/posts/:id/comments/:commentId/replies
 exports.addReply = async (req, res) => {
   try {
     const { text, replyingTo } = req.body;
@@ -615,6 +588,7 @@ exports.addReply = async (req, res) => {
       author: req.user._id,
       pseudonym: req.user.pseudonym,
       text,
+      parentId: comment._id, // <-- add this
       isPostAuthor,
       replyingTo: replyingTo || null,
       createdAt: new Date(),
@@ -625,22 +599,24 @@ exports.addReply = async (req, res) => {
     const newReply = comment.replies[comment.replies.length - 1];
 
     // Notify comment author
-try {
-  if (comment.author.toString() !== req.user._id.toString()) {
-    const Notification = require("../models/Notification");
-    await Notification.create({
-      recipient: comment.author,
-      sender: req.user._id,
-      senderPseudonym: req.user.pseudonym,
-      type: "reply", // ← changed from "comment" to "reply"
-      post: req.params.id,
-      postPreview: post.content?.substring(0, 60),
-      commentText: text.substring(0, 80),
-    });
-  }
-} catch (e) {
-  console.log("Reply notification error:", e.message);
-}
+    try {
+      if (comment.author.toString() !== req.user._id.toString()) {
+        const Notification = require("../models/Notification");
+        
+        // Use type "reply" and a different message
+        await Notification.create({
+          recipient: comment.author,
+          sender: req.user._id,
+          senderPseudonym: req.user.pseudonym,
+          type: "reply", // <-- changed
+          post: req.params.id,
+          postPreview: post.content?.substring(0, 60),
+          commentText: text.substring(0, 80),
+        });
+      }
+    } catch (e) {
+      console.log("Reply notification error:", e.message);
+    }
 
     return res.status(201).json({ message: "Reply added 💜", reply: newReply });
   } catch (error) {
