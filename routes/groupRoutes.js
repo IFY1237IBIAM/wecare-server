@@ -181,6 +181,14 @@ router.post("/:groupId/posts", protect, requireMember, async (req, res) => {
       mood: mood || "hope",
     });
 
+    // Emit socket event for real-time updates
+    if (req.io) {
+      req.io.to(`group:${req.params.groupId}`).emit("group_post_added", {
+        groupId: req.params.groupId,
+        post: post.toObject(),
+      });
+    }
+
     // Notify group members, don't await to avoid timeout
     const group = req.group;
     const otherMembers = group.members
@@ -239,6 +247,15 @@ router.post("/:groupId/posts/:postId/comments", protect, requireMember, async (r
     await post.save({ validateBeforeSave: false });
 
     const newComment = post.comments[post.comments.length - 1];
+
+    // Emit socket event for real-time updates
+    if (req.io) {
+      req.io.to(`group:${req.params.groupId}`).emit("group_comment_added", {
+        groupId: req.params.groupId,
+        postId: req.params.postId,
+        comment: newComment.toObject(),
+      });
+    }
 
     // Notify post author
     if (post.author.toString() !== req.user._id.toString()) {
