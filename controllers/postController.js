@@ -2,7 +2,7 @@ const Post = require("../models/Post");
 const Report = require("../models/Report");
 const { analyzeContent } = require("../middleware/contentModerator");
 const Notification = require("../models/Notification");
-
+const { sendPushNotification } = require("../utils/sendPush"); // <-- add this
 // @route  POST /api/posts
 exports.createPost = async (req, res) => {
   try {
@@ -309,7 +309,7 @@ exports.addComment = async (req, res) => {
             author: req.user._id,
             pseudonym: req.user.pseudonym,
             text,
-            parentId: null, // <-- add this
+            parentId: null,
             isPostAuthor: post.author.toString() === req.user._id.toString(),
             createdAt: new Date(),
           },
@@ -320,7 +320,7 @@ exports.addComment = async (req, res) => {
 
     const newComment = updated.comments[updated.comments.length - 1];
 
-    // Create notification for post author
+    // Create notification + send push for post author
     try {
       const freshPost = await Post.findById(req.params.id).select("author content");
 
@@ -334,6 +334,16 @@ exports.addComment = async (req, res) => {
           postPreview: freshPost.content?.substring(0, 60),
           commentText: text.substring(0, 100),
         });
+
+        // Send push notification
+        sendPushNotification(freshPost.author, {
+          title: `${req.user.pseudonym} commented on your post`,
+          body: text.substring(0, 80),
+          data: {
+            screen: "Post",
+            postId: req.params.id,
+          },
+        }).catch(err => console.log("Push error:", err.message));
       }
     } catch (e) {
       console.log("Notification error:", e.message);
@@ -347,6 +357,7 @@ exports.addComment = async (req, res) => {
     return res.status(500).json({ message: error.message });
   }
 };
+
 
 // @route  PUT /api/posts/:id
 exports.editPost = async (req, res) => {
@@ -588,7 +599,7 @@ exports.addReply = async (req, res) => {
       author: req.user._id,
       pseudonym: req.user.pseudonym,
       text,
-      parentId: comment._id, // <-- add this
+      parentId: comment._id,
       isPostAuthor,
       replyingTo: replyingTo || null,
       createdAt: new Date(),
@@ -598,21 +609,29 @@ exports.addReply = async (req, res) => {
 
     const newReply = comment.replies[comment.replies.length - 1];
 
-    // Notify comment author
+    // Notify comment author + send push
     try {
       if (comment.author.toString() !== req.user._id.toString()) {
-        const Notification = require("../models/Notification");
-        
-        // Use type "reply" and a different message
         await Notification.create({
           recipient: comment.author,
           sender: req.user._id,
           senderPseudonym: req.user.pseudonym,
-          type: "reply", // <-- changed
+          type: "reply",
           post: req.params.id,
           postPreview: post.content?.substring(0, 60),
           commentText: text.substring(0, 80),
         });
+
+        // Send push notification
+        sendPushNotification(comment.author, {
+          title: `${req.user.pseudonym} replied to your comment`,
+          body: text.substring(0, 80),
+          data: {
+            screen: "Post",
+            postId: req.params.id,
+            commentId: comment._id.toString(),
+          },
+        }).catch(err => console.log("Push error:", err.message));
       }
     } catch (e) {
       console.log("Reply notification error:", e.message);
