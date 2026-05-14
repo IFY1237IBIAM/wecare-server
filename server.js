@@ -1,4 +1,6 @@
 const express = require("express");
+const http = require("http");
+const { Server } = require("socket.io");
 const dotenv = require("dotenv");
 const helmet = require("helmet");
 const cors = require("cors");
@@ -9,13 +11,72 @@ dotenv.config();
 connectDB();
 
 const app = express();
+const httpServer = http.createServer(app);
+
+// Socket.IO initialization
+const io = new Server(httpServer, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"],
+  },
+  pingTimeout: 60000,
+  pingInterval: 25000,
+});
+
+// Attach io to every request so controllers can emit events
+app.use((req, res, next) => {
+  req.io = io;
+  next();
+});
+
 app.set('trust proxy', 1);
-
-
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
 
+// ── Socket.IO connection handling ──
+io.on("connection", (socket) => {
+  console.log(`🔌 Socket connected: ${socket.id}`);
+
+  socket.on("join_post", (postId) => {
+    if (!postId) return;
+    socket.join(`post:${postId}`);
+    console.log(`📌 ${socket.id} joined post:${postId}`);
+  });
+
+  socket.on("leave_post", (postId) => {
+    if (!postId) return;
+    socket.leave(`post:${postId}`);
+    console.log(`📤 ${socket.id} left post:${postId}`);
+  });
+
+  socket.on("join_group", (groupId) => {
+    if (!groupId) return;
+    socket.join(`group:${groupId}`);
+    console.log(`👥 ${socket.id} joined group:${groupId}`);
+  });
+
+  socket.on("leave_group", (groupId) => {
+    if (!groupId) return;
+    socket.leave(`group:${groupId}`);
+    console.log(`📤 ${socket.id} left group:${groupId}`);
+  });
+
+  socket.on("identify", (userId) => {
+    if (!userId) return;
+    socket.join(`user:${userId}`);
+    console.log(`👤 User ${userId} identified`);
+  });
+
+  socket.on("disconnect", (reason) => {
+    console.log(`🔌 Socket disconnected: ${socket.id} — ${reason}`);
+  });
+});
+
+// Make io accessible outside this file
+module.exports.io = io;
+
+// Rate limiting
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
@@ -42,7 +103,7 @@ app.use("/api/checkin", require("./routes/checkInRoutes"));
 app.use("/api/groups", groupLimiter, require("./routes/groupRoutes"));
 app.use("/api/appeals", require("./routes/appealRoutes"));
 
-// Error handler
+// Error handler - you had this, don't delete it
 app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(500).json({ 
@@ -56,6 +117,9 @@ app.use((req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+httpServer.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
+
+// Export for testing/other files
+module.exports = { app, httpServer, io };
