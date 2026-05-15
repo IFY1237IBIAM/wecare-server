@@ -52,7 +52,7 @@ const SELF_HARM_METHODS = [
 const HATE_SPEECH = [
   "ethnic cleansing", "genocide is good", "white supremacy",
   "all [group] should die", "race war", "exterminate",
-  "final solution", "master race",
+  "final solution", "master race", "fuck you"
 ];
 
 const SPAM_PATTERNS = [

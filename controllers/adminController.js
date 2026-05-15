@@ -90,8 +90,8 @@ exports.deleteReportedPost = async (req, res) => {
         let nextStep = "";
 
         if (userBanned) {
-          adminMessage = `Your account has been suspended from WeCare.`;
-          nextStep = `After 3 confirmed violations of our community guidelines, your account has been permanently suspended. You can no longer post, comment, or interact on WeCare. If you believe this is a mistake, please submit an appeal.`;
+          adminMessage = `Your account has been suspended from HushCircle.`;
+          nextStep = `After 3 confirmed violations of our community guidelines, your account has been permanently suspended. You can no longer post, comment, or interact on HushCircle. If you believe this is a mistake, please submit an appeal.`;
         } else {
           adminMessage = `One of your posts has been removed by our moderation team.`;
           nextStep = `This is violation ${violationNum} of 3. After 3 confirmed violations, your account will be automatically suspended. Please review our community guidelines to avoid further action.`;
@@ -100,7 +100,7 @@ exports.deleteReportedPost = async (req, res) => {
         await Notification.create({
           recipient: post.author,
           sender: req.user._id,
-          senderPseudonym: "WeCare Team",
+          senderPseudonym: "HushCirlce Team",
           type: "post_removed",
           postPreview: post.content?.substring(0, 80),
           adminMessage,
@@ -226,11 +226,11 @@ exports.unbanUser = async (req, res) => {
     await Notification.create({
       recipient: user._id,
       sender: req.user._id,
-      senderPseudonym: "WeCare Team",
+      senderPseudonym: "HushCircle Team",
       type: "post_removed",
       adminMessage: "Your account has been reinstated.",
       adminReason: "Account reinstated by moderation team",
-      nextStep: "Welcome back to WeCare 💜. Your account has been reinstated. Please ensure you follow our community guidelines going forward. We are glad to have you back.",
+      nextStep: "Welcome back to HushCircle 💜. Your account has been reinstated. Please ensure you follow our community guidelines going forward. We are glad to have you back.",
       violationCount: user.confirmedViolations,
       isBanNotification: false,
       isUnban: true,

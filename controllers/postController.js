@@ -388,7 +388,7 @@ exports.reportPost = async (req, res) => {
     if (reportCount >= 3) {
       await Post.findByIdAndUpdate(req.params.id, { flagged: true, flagType: "community_reports" });
     }
-    return res.status(201).json({ message: "Thank you for keeping WeCare safe 💜", reportId: report._id });
+    return res.status(201).json({ message: "Thank you for keeping HushCircle safe 💜", reportId: report._id });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }

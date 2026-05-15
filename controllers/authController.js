@@ -37,7 +37,7 @@ exports.signup = async (req, res) => {
     const token = generateToken(user._id, user.role);
 
     return res.status(201).json({
-      message: "Account created successfully! Welcome to WeCare 💜",
+      message: "Account created successfully! Welcome to HushCircle 💜",
       token,
       user: {
         id: user._id,

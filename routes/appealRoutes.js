@@ -111,7 +111,7 @@ router.patch("/:id", protect, adminOnly, async (req, res) => {
         type: "post_removed",
         adminMessage: "Your appeal has been accepted.",
         adminReason: "Appeal accepted by moderation team",
-        nextStep: `Welcome back to WeCare 💜. Your ban has been lifted and your violation record has been reset.`,
+        nextStep: `Welcome back to HushCircle 💜. Your ban has been lifted and your violation record has been reset.`,
         violationCount: 0,
         isBanNotification: false,
         isUnban: true,
