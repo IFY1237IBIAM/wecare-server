@@ -62,6 +62,25 @@ io.on("connection", (socket) => {
     console.log(`📤 ${socket.id} left group:${groupId}`);
   });
 
+   // ── Typing indicators for groups ──
+  socket.on("typing", ({ groupId, userId, pseudonym }) => {
+    if (!groupId || !userId || !pseudonym) return;
+    socket.to(`group:${groupId}`).emit("user_typing", {
+      groupId,
+      userId,
+      pseudonym,
+    });
+  });
+
+  socket.on("stop_typing", ({ groupId, userId, pseudonym }) => {
+    if (!groupId || !userId) return;
+    socket.to(`group:${groupId}`).emit("user_stop_typing", {
+      groupId,
+      userId,
+      pseudonym,
+    });
+  });
+
   socket.on("identify", (userId) => {
     if (!userId) return;
     socket.join(`user:${userId}`);
