@@ -79,6 +79,9 @@ exports.deleteReportedPost = async (req, res) => {
 
       if (postAuthor.confirmedViolations >= 3 && !postAuthor.isBanned) {
         postAuthor.isBanned = true;
+        postAuthor.appealStatus = "banned";   // 1. Reset status
+        postAuthor.appealSubmittedAt = null;  // 2. Clear old appeal date
+        postAuthor.appealReviewedAt = null;   // 3. Clear old review date
         userBanned = true;
       }
 
@@ -315,5 +318,38 @@ exports.getAppeals = async (req, res) => {
     res.json({ appeals });
   } catch (error) {
     res.status(500).json({ message: error.message });
+  }
+};
+
+
+// @route POST /api/admin/ban-user
+exports.banUser = async (req, res) => {
+  try {
+    const { pseudonym, reason } = req.body;
+    if (!pseudonym) return res.status(400).json({ message: "Pseudonym required" });
+
+    const user = await User.findOne({ pseudonym });
+    if (!user) return res.status(404).json({ message: "User not found" });
+    if (user.isBanned) return res.status(400).json({ message: "User already banned" });
+
+    user.isBanned = true;
+    user.appealStatus = "banned";  // reset it
+    user.appealSubmittedAt = null;
+    user.appealReviewedAt = null;
+    user.banReason = reason || "Violation of community guidelines";
+    
+    await user.save({ validateBeforeSave: false });
+
+    await AdminAction.create({
+      admin: req.user._id,
+      adminPseudonym: req.user.pseudonym,
+      action: "ban_user",
+      targetUser: user._id,
+      reason: reason || "Manual ban by admin",
+    });
+
+    return res.json({ message: `${pseudonym} has been banned` });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
   }
 };

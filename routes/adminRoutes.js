@@ -13,6 +13,7 @@ router.get("/appeals", adminController.getAppeals);
 router.get("/stats", adminController.getAdminStats);
 router.post("/delete-post", adminController.deleteReportedPost);
 router.post("/dismiss-report", adminController.dismissReport);
+router.post("/ban-user", adminController.banUser);
 router.post("/unban-user", adminController.unbanUser);
 
 module.exports = router;
