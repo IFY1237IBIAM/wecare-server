@@ -57,7 +57,7 @@ exports.login = async (req, res) => {
     const User = require("../models/User");
     const { email, password } = req.body;
 
-    if (!email ||!password) {
+    if (!email || !password) {
       return res.status(400).json({ message: "All fields are required" });
     }
 
@@ -69,9 +69,20 @@ exports.login = async (req, res) => {
 
     const token = generateToken(user._id, user.role);
 
-    // Return user data even if banned so frontend can show BanScreen
+    // NEW: Check appealStatus for correct message
+    let message = "Welcome back 💜";
+    if (user.isBanned && user.appealStatus === "none") {
+      message = "Account suspended";
+    } else if (user.isBanned && user.appealStatus === "pending") {
+      message = "Appeal under review";
+    } else if (!user.isBanned && user.appealStatus === "accepted") {
+      message = "Account reinstated";
+    } else if (user.isBanned && user.appealStatus === "rejected") {
+      message = "Appeal rejected";
+    }
+
     return res.json({
-      message: user.isBanned? "Account suspended" : "Welcome back 💜",
+      message,
       token,
       user: {
         id: user._id,
@@ -79,9 +90,9 @@ exports.login = async (req, res) => {
         avatar: user.avatar,
         role: user.role,
         isBanned: user.isBanned,
-        violations: user.violations || [],
-        appealStatus: user.appealStatus || "none",
-        confirmedViolations: user.confirmedViolations || 0
+        appealStatus: user.appealStatus, // keep this
+        confirmedViolations: user.confirmedViolations || 0,
+        violations: user.violations || []
       },
     });
   } catch (error) {
@@ -237,5 +248,16 @@ exports.getUserByPseudonym = async (req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ message: error.message });
+  }
+};
+
+
+exports.resetAppealStatus = async (req, res) => {
+  try {
+    const User = require("../models/User"); // add this
+    await User.findByIdAndUpdate(req.user.id, { appealStatus: "none" });
+    res.json({ message: "ok" });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
   }
 };

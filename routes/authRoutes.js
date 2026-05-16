@@ -5,6 +5,7 @@ const { protect } = require("../middleware/authMiddleware");
 
 router.post("/signup", authController.signup);
 router.post("/login", authController.login);
+router.post("/reset-appeal-status", protect, authController.resetAppealStatus);
 router.get("/me", protect, authController.getMe);
 router.get("/stats", protect, authController.getUserStats);
 router.get("/my-posts", protect, authController.getMyPosts);
