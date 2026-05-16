@@ -22,14 +22,12 @@ router.post("/", protect, async (req, res) => {
       return res.status(400).json({ message: "You are not currently banned" });
     }
 
-    // Block if this specific ban cycle was permanently rejected
     if (user.appealStatus === "permanently_banned") {
       return res.status(400).json({
         message: "Your suspension is permanent. No further appeals are accepted.",
       });
     }
 
-    // Block if already under review for THIS ban cycle
     if (user.appealStatus === "under_review") {
       const existing = await Appeal.findOne({ user: userId, status: "pending" });
       if (existing) {
@@ -59,7 +57,6 @@ router.post("/", protect, async (req, res) => {
       status: "pending",
     });
 
-    // Set appealStatus to under_review
     await User.findByIdAndUpdate(userId, { appealStatus: "under_review" });
 
     return res.status(201).json({
@@ -71,11 +68,37 @@ router.post("/", protect, async (req, res) => {
   }
 });
 
-// GET /api/appeals/mine — return latest appeal for current user
+// GET /api/appeals/mine
+// Source of truth is user.appealStatus — never raw appeal records
 router.get("/mine", protect, async (req, res) => {
   try {
-    const appeal = await Appeal.findOne({ user: req.user._id })
-      .sort({ createdAt: -1 });
+    const user = await User.findById(req.user._id)
+      .select("isBanned appealStatus");
+
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    // If not banned or appealStatus is none/reinstated — return null
+    // This prevents old appeal records leaking into a new ban cycle
+    if (!user.isBanned || !user.appealStatus || user.appealStatus === "none") {
+      return res.json({ appeal: null });
+    }
+
+    // Map appealStatus to which appeal record to fetch
+    let statusFilter;
+    if (user.appealStatus === "under_review") {
+      statusFilter = "pending";
+    } else if (user.appealStatus === "permanently_banned") {
+      statusFilter = "rejected";
+    } else {
+      // Any other status (e.g. stale) — return null
+      return res.json({ appeal: null });
+    }
+
+    const appeal = await Appeal.findOne({
+      user: req.user._id,
+      status: statusFilter,
+    }).sort({ createdAt: -1 });
+
     return res.json({ appeal: appeal || null });
   } catch (error) {
     return res.status(500).json({ message: error.message });
@@ -123,6 +146,9 @@ router.patch("/:id", protect, adminOnly, async (req, res) => {
       user.appealStatus = "reinstated";
       await user.save({ validateBeforeSave: false });
 
+      // Clean up all appeal records for this user — fresh start
+      await Appeal.deleteMany({ user: appeal.user });
+
       await Notification.create({
         recipient: appeal.user,
         sender: req.user._id,
@@ -145,7 +171,6 @@ router.patch("/:id", protect, adminOnly, async (req, res) => {
         reason: "Appeal accepted — user reinstated",
       });
     } else {
-      // Rejected — mark this ban cycle as permanently closed
       user.isBanned = true;
       user.appealStatus = "permanently_banned";
       await user.save({ validateBeforeSave: false });
