@@ -67,32 +67,25 @@ exports.login = async (req, res) => {
     const isMatch = await user.matchPassword(password);
     if (!isMatch) return res.status(401).json({ message: "Invalid email or password" });
 
+    // If reinstated — reset appealStatus so popup shows once then clears
+    // We do NOT block login here — frontend handles which screen to show
     const token = generateToken(user._id, user.role);
 
-    // NEW: Check appealStatus for correct message
-    let message = "Welcome back 💜";
-    if (user.isBanned && user.appealStatus === "none") {
-      message = "Account suspended";
-    } else if (user.isBanned && user.appealStatus === "pending") {
-      message = "Appeal under review";
-    } else if (!user.isBanned && user.appealStatus === "accepted") {
-      message = "Account reinstated";
-    } else if (user.isBanned && user.appealStatus === "rejected") {
-      message = "Appeal rejected";
-    }
-
     return res.json({
-      message,
+      message: user.isBanned ? "Account suspended" : "Welcome back 💜",
       token,
       user: {
         id: user._id,
+        _id: user._id,
         pseudonym: user.pseudonym,
         avatar: user.avatar,
         role: user.role,
         isBanned: user.isBanned,
-        appealStatus: user.appealStatus, // keep this
         confirmedViolations: user.confirmedViolations || 0,
-        violations: user.violations || []
+        violations: user.violations || [],
+        // Always return fresh appealStatus from DB — never stale
+        appealStatus: user.appealStatus || "none",
+        showOnlineStatus: user.showOnlineStatus,
       },
     });
   } catch (error) {
@@ -251,13 +244,46 @@ exports.getUserByPseudonym = async (req, res) => {
   }
 };
 
-
-exports.resetAppealStatus = async (req, res) => {
+// @route GET /api/auth/refresh
+// Called on app open to get fresh user state from DB
+exports.refreshUser = async (req, res) => {
   try {
-    const User = require("../models/User"); // add this
-    await User.findByIdAndUpdate(req.user.id, { appealStatus: "none" });
-    res.json({ message: "ok" });
+    const User = require("../models/User");
+    const user = await User.findById(req.user._id)
+      .select("+showOnlineStatus +isOnline +lastSeen +role +appealStatus +isBanned +confirmedViolations +violations");
+
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    return res.json({
+      user: {
+        id: user._id,
+        _id: user._id,
+        pseudonym: user.pseudonym,
+        avatar: user.avatar,
+        role: user.role,
+        isBanned: user.isBanned,
+        confirmedViolations: user.confirmedViolations || 0,
+        violations: user.violations || [],
+        appealStatus: user.appealStatus || "none",
+        showOnlineStatus: user.showOnlineStatus,
+        isOnline: user.isOnline,
+        lastSeen: user.lastSeen,
+      },
+    });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+
+// @route PUT /api/auth/clear-reinstated
+// Called after user sees the reinstated popup — clears the flag
+exports.clearReinstatedStatus = async (req, res) => {
+  try {
+    const User = require("../models/User");
+    await User.findByIdAndUpdate(req.user._id, { appealStatus: "none" });
+    return res.json({ message: "Status cleared" });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
   }
 };
