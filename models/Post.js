@@ -6,7 +6,7 @@ const replySchema = new mongoose.Schema(
     pseudonym: { type: String, required: true },
     text: { type: String, required: true, maxlength: [200, "Reply cannot exceed 200 characters"] },
     isPostAuthor: { type: Boolean, default: false },
-    replyingTo: { type: String, default: null }, // pseudonym being replied to
+    replyingTo: { type: String, default: null },
   },
   { timestamps: true }
 );
@@ -45,6 +45,15 @@ const postSchema = new mongoose.Schema(
       enum: ["heartbreak", "fear", "sadness", "struggle", "hope"],
       default: "sadness",
     },
+    // NEW: hashtags field
+    hashtags: {
+      type: [String],
+      default: [],
+      validate: {
+        validator: (arr) => arr.length <= 5,
+        message: "Maximum 5 hashtags per post",
+      },
+    },
     reactions: [reactionSchema],
     comments: [commentSchema],
     flagged: { type: Boolean, default: false },
@@ -57,5 +66,6 @@ const postSchema = new mongoose.Schema(
 postSchema.index({ createdAt: -1 });
 postSchema.index({ author: 1 });
 postSchema.index({ flagged: 1 });
+postSchema.index({ hashtags: 1 }); // NEW: index for fast hashtag queries
 
 module.exports = mongoose.model("Post", postSchema);

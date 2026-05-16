@@ -9,7 +9,7 @@ exports.createPost = async (req, res) => {
   try {
     const { content, mood } = req.body;
 
-    if (!content) {
+    if (!content ||!content.trim()) {
       return res.status(400).json({ message: "Content is required" });
     }
 
@@ -22,19 +22,38 @@ exports.createPost = async (req, res) => {
       });
     }
 
+    // Extract hashtags from content — max 5, lowercase, deduplicate
+    const extracted = (content.match(/#\w+/g) || [])
+     .map((t) => t.toLowerCase())
+     .filter((t) => t.length <= 32)
+     .slice(0, 5);
+    const hashtags = [...new Set(extracted)];
+
     const post = await Post.create({
       author: req.user._id,
       pseudonym: req.user.pseudonym,
-      content,
+      content: content.trim(),
       mood: mood || "sadness",
-      flagged: modResult.crisisDetected || modResult.profanityDetected,
+      hashtags,
+      flagged: modResult.flags.length > 0,
       flagType: modResult.flags[0]?.type || null,
     });
 
-    const response = { message: "Post created 💜", post };
+    const obj = post.toObject();
+    const reactions = Array.isArray(obj.reactions)? obj.reactions : [];
+    const reactionCounts = {};
+    reactions.forEach((r) => {
+      if (r.type) reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1;
+    });
+
+    const response = {
+      message: "Post shared 💜",
+      post: {...obj, reactions, reactionCounts, totalReactions: reactions.length },
+      crisisDetected: modResult.crisisDetected,
+      autoFlagged: modResult.flags.length > 0,
+    };
 
     if (modResult.crisisDetected) {
-      response.crisisDetected = true;
       response.crisisMessage = "We noticed your post may be expressing thoughts of self-harm. You are not alone 💜";
       response.crisisResources = [
         { name: "International Association for Suicide Prevention", url: "https://www.iasp.info/resources/Crisis_Centres/" },
@@ -72,6 +91,44 @@ exports.getFeed = async (req, res) => {
     });
 
     return res.json({ posts: postsWithReactions, count: posts.length });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+// NEW: @route GET /api/posts/hashtag/:tag
+exports.getPostsByHashtag = async (req, res) => {
+  try {
+    let tag = req.params.tag.toLowerCase();
+
+    // Normalize — add # if missing
+    if (!tag.startsWith("#")) tag = `#${tag}`;
+
+    const limit = parseInt(req.query.limit) || 15;
+    const lastId = req.query.lastId;
+    const query = { hashtags: tag };
+    if (lastId) query._id = { $lt: lastId };
+
+    const posts = await Post.find(query)
+     .sort({ createdAt: -1 })
+     .limit(limit)
+     .select("-author");
+
+    const postsWithReactions = posts.map((post) => {
+      const obj = post.toObject();
+      const reactions = Array.isArray(obj.reactions)? obj.reactions : [];
+      const reactionCounts = {};
+      reactions.forEach((r) => {
+        if (r.type) reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1;
+      });
+      return {...obj, reactions, reactionCounts, totalReactions: reactions.length };
+    });
+
+    return res.json({
+      posts: postsWithReactions,
+      tag,
+      count: postsWithReactions.length,
+    });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
@@ -156,7 +213,6 @@ exports.reactToPost = async (req, res) => {
       userReaction: userReaction?.type || null,
     };
 
-    // ── Emit real-time event ──
     if (req.io) {
       req.io.to(`post:${req.params.id}`).emit("reaction_updated", payload);
     }
@@ -210,12 +266,10 @@ exports.addComment = async (req, res) => {
       totalComments: updated.comments.reduce((total, c) => total + 1 + (c.replies?.length || 0), 0),
     };
 
-    // ── Emit real-time event ──
     if (req.io) {
       req.io.to(`post:${req.params.id}`).emit("comment_added", payload);
     }
 
-    // Notification + push
     try {
       const freshPost = await Post.findById(req.params.id).select("author content");
       if (freshPost && freshPost.author.toString()!== req.user._id.toString()) {
@@ -288,12 +342,10 @@ exports.addReply = async (req, res) => {
       totalComments,
     };
 
-    // ── Emit real-time event ──
     if (req.io) {
       req.io.to(`post:${req.params.id}`).emit("reply_added", payload);
     }
 
-    // Notify comment author + push
     try {
       if (comment.author.toString()!== req.user._id.toString()) {
         await Notification.create({
@@ -337,6 +389,12 @@ exports.editPost = async (req, res) => {
         return res.status(400).json({ message: "Edited content violates community guidelines." });
       }
       post.content = content;
+      // Re-extract hashtags on edit
+      const extracted = (content.match(/#\w+/g) || [])
+       .map((t) => t.toLowerCase())
+       .filter((t) => t.length <= 32)
+       .slice(0, 5);
+      post.hashtags = [...new Set(extracted)];
     }
     if (mood) post.mood = mood;
     await post.save({ validateBeforeSave: false });
