@@ -22,19 +22,22 @@ router.post("/", protect, async (req, res) => {
       return res.status(400).json({ message: "You are not currently banned" });
     }
 
-    // Block if already permanently banned
+    // Block if this specific ban cycle was permanently rejected
     if (user.appealStatus === "permanently_banned") {
       return res.status(400).json({
         message: "Your suspension is permanent. No further appeals are accepted.",
       });
     }
 
-    const existing = await Appeal.findOne({ user: userId, status: "pending" });
-    if (existing) {
-      return res.status(400).json({
-        message: "You have already submitted an appeal",
-        appeal: existing,
-      });
+    // Block if already under review for THIS ban cycle
+    if (user.appealStatus === "under_review") {
+      const existing = await Appeal.findOne({ user: userId, status: "pending" });
+      if (existing) {
+        return res.status(400).json({
+          message: "Your appeal is already under review.",
+          appeal: existing,
+        });
+      }
     }
 
     const violations = await AdminAction.find({
@@ -56,7 +59,7 @@ router.post("/", protect, async (req, res) => {
       status: "pending",
     });
 
-    // Update user appealStatus
+    // Set appealStatus to under_review
     await User.findByIdAndUpdate(userId, { appealStatus: "under_review" });
 
     return res.status(201).json({
@@ -68,7 +71,7 @@ router.post("/", protect, async (req, res) => {
   }
 });
 
-// GET /api/appeals/mine
+// GET /api/appeals/mine — return latest appeal for current user
 router.get("/mine", protect, async (req, res) => {
   try {
     const appeal = await Appeal.findOne({ user: req.user._id })
@@ -115,20 +118,19 @@ router.patch("/:id", protect, adminOnly, async (req, res) => {
     if (!user) return res.status(404).json({ message: "User not found" });
 
     if (action === "accepted") {
-      // ── Reinstate user ──
       user.isBanned = false;
       user.confirmedViolations = 0;
-      user.appealStatus = "reinstated"; // ← key fix
+      user.appealStatus = "reinstated";
       await user.save({ validateBeforeSave: false });
 
       await Notification.create({
         recipient: appeal.user,
         sender: req.user._id,
-        senderPseudonym: "WeCare Team",
+        senderPseudonym: "HushCircle Team",
         type: "post_removed",
         adminMessage: "Your appeal has been accepted.",
         adminReason: "Appeal accepted by moderation team",
-        nextStep: "Welcome back to WeCare 💜. Your ban has been lifted and your violation record has been reset. Please review our community guidelines going forward.",
+        nextStep: "Welcome back to HushCircle 💜. Your ban has been lifted and your violation record has been reset. Please review our community guidelines going forward.",
         violationCount: 0,
         isBanNotification: false,
         isUnban: true,
@@ -143,15 +145,15 @@ router.patch("/:id", protect, adminOnly, async (req, res) => {
         reason: "Appeal accepted — user reinstated",
       });
     } else {
-      // ── Permanently ban ──
+      // Rejected — mark this ban cycle as permanently closed
       user.isBanned = true;
-      user.appealStatus = "permanently_banned"; // ← key fix
+      user.appealStatus = "permanently_banned";
       await user.save({ validateBeforeSave: false });
 
       await Notification.create({
         recipient: appeal.user,
         sender: req.user._id,
-        senderPseudonym: "WeCare Team",
+        senderPseudonym: "HushCircle Team",
         type: "post_removed",
         adminMessage: "Your appeal has been rejected.",
         adminReason: reviewNote || "Appeal does not meet criteria for reinstatement",

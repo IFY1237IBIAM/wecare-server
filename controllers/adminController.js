@@ -66,6 +66,7 @@ exports.deleteReportedPost = async (req, res) => {
     let newViolationCount = 0;
 
     if (postAuthor) {
+      // Only count violation if this post hasn't been counted before
       const alreadyCounted = await AdminAction.findOne({
         targetPost: postId,
         action: "delete_post",
@@ -77,12 +78,17 @@ exports.deleteReportedPost = async (req, res) => {
 
       newViolationCount = postAuthor.confirmedViolations;
 
+      // Auto-ban after 3 confirmed violations
       if (postAuthor.confirmedViolations >= 3 && !postAuthor.isBanned) {
         postAuthor.isBanned = true;
-        postAuthor.appealStatus = "banned";   // 1. Reset status
-        postAuthor.appealSubmittedAt = null;  // 2. Clear old appeal date
-        postAuthor.appealReviewedAt = null;   // 3. Clear old review date
         userBanned = true;
+
+        // ── CRITICAL FIX: reset appealStatus on every new ban ──
+        // This ensures old "reinstated" status never leaks into a new ban cycle
+        postAuthor.appealStatus = "none";
+
+        // Delete any old appeal records so the new ban starts a fresh cycle
+        await Appeal.deleteMany({ user: postAuthor._id });
       }
 
       await postAuthor.save({ validateBeforeSave: false });
@@ -93,17 +99,17 @@ exports.deleteReportedPost = async (req, res) => {
         let nextStep = "";
 
         if (userBanned) {
-          adminMessage = `Your account has been suspended from HushCircle.`;
+          adminMessage = "Your account has been suspended from HushCircle.";
           nextStep = `After 3 confirmed violations of our community guidelines, your account has been permanently suspended. You can no longer post, comment, or interact on HushCircle. If you believe this is a mistake, please submit an appeal.`;
         } else {
-          adminMessage = `One of your posts has been removed by our moderation team.`;
+          adminMessage = "One of your posts has been removed by our moderation team.";
           nextStep = `This is violation ${violationNum} of 3. After 3 confirmed violations, your account will be automatically suspended. Please review our community guidelines to avoid further action.`;
         }
 
         await Notification.create({
           recipient: post.author,
           sender: req.user._id,
-          senderPseudonym: "HushCirlce Team",
+          senderPseudonym: "HushCircle Team",
           type: "post_removed",
           postPreview: post.content?.substring(0, 80),
           adminMessage,
@@ -145,7 +151,7 @@ exports.deleteReportedPost = async (req, res) => {
 exports.getBannedUsers = async (req, res) => {
   try {
     const bannedUsers = await User.find({ isBanned: true })
-      .select("pseudonym email confirmedViolations createdAt lastSeen isBanned")
+      .select("pseudonym email confirmedViolations createdAt lastSeen isBanned appealStatus")
       .sort({ updatedAt: -1 });
 
     const enriched = await Promise.all(
@@ -173,11 +179,14 @@ exports.getBannedUsers = async (req, res) => {
           confirmedViolations: user.confirmedViolations || 0,
           createdAt: user.createdAt,
           lastSeen: user.lastSeen,
+          appealStatus: user.appealStatus || "none",
           lastViolationReason: lastAction?.reason || "Community guideline violation",
           lastViolationDate: lastAction?.createdAt,
           bannedBy: lastAction?.adminPseudonym || "System",
           hasRejectedAppeal: !!rejectedAppeal,
           hasPendingAppeal: !!pendingAppeal,
+          // Lock unban button only if appeal was rejected in THIS ban cycle
+          unbanLocked: user.appealStatus === "permanently_banned",
         };
       })
     );
@@ -224,7 +233,13 @@ exports.unbanUser = async (req, res) => {
       user.confirmedViolations = 0;
     }
 
+    // ── CRITICAL FIX: always reset appealStatus on manual unban ──
+    user.appealStatus = "none";
+
     await user.save({ validateBeforeSave: false });
+
+    // Delete old appeal records so next ban cycle is clean
+    await Appeal.deleteMany({ user: user._id });
 
     await Notification.create({
       recipient: user._id,
@@ -245,7 +260,7 @@ exports.unbanUser = async (req, res) => {
       adminPseudonym: req.user.pseudonym,
       action: "ban_user",
       targetUser: user._id,
-      reason: `Unbanned${resetViolations ? " and violations reset" : ""}`,
+      reason: `Manually unbanned${resetViolations ? " and violations reset" : ""}`,
     });
 
     return res.json({
@@ -262,7 +277,7 @@ exports.unbanUser = async (req, res) => {
 exports.getUserInfo = async (req, res) => {
   try {
     const user = await User.findOne({ pseudonym: req.params.pseudonym })
-      .select("pseudonym email role isBanned confirmedViolations createdAt lastSeen");
+      .select("pseudonym email role isBanned confirmedViolations createdAt lastSeen appealStatus");
     if (!user) return res.status(404).json({ message: "User not found" });
 
     const recentActivity = await AdminAction.find({ targetUser: user._id })
@@ -311,45 +326,14 @@ exports.getAdminStats = async (req, res) => {
   }
 };
 
-// @route GET /api/admin/appeals
-exports.getAppeals = async (req, res) => {
-  try {
-    const appeals = await Appeal.find().sort({ createdAt: -1 }).limit(50);
-    res.json({ appeals });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
+// // @route GET /api/admin/appeals
+// exports.getAppeals = async (req, res) => {
+//   try {
+//     const appeals = await Appeal.find().sort({ createdAt: -1 }).limit(50);
+//     res.json({ appeals });
+//   } catch (error) {
+//     res.status(500).json({ message: error.message });
+//   }
+// };
 
 
-// @route POST /api/admin/ban-user
-exports.banUser = async (req, res) => {
-  try {
-    const { pseudonym, reason } = req.body;
-    if (!pseudonym) return res.status(400).json({ message: "Pseudonym required" });
-
-    const user = await User.findOne({ pseudonym });
-    if (!user) return res.status(404).json({ message: "User not found" });
-    if (user.isBanned) return res.status(400).json({ message: "User already banned" });
-
-    user.isBanned = true;
-    user.appealStatus = "banned";  // reset it
-    user.appealSubmittedAt = null;
-    user.appealReviewedAt = null;
-    user.banReason = reason || "Violation of community guidelines";
-    
-    await user.save({ validateBeforeSave: false });
-
-    await AdminAction.create({
-      admin: req.user._id,
-      adminPseudonym: req.user.pseudonym,
-      action: "ban_user",
-      targetUser: user._id,
-      reason: reason || "Manual ban by admin",
-    });
-
-    return res.json({ message: `${pseudonym} has been banned` });
-  } catch (error) {
-    return res.status(500).json({ message: error.message });
-  }
-};
