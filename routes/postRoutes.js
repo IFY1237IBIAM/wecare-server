@@ -8,7 +8,7 @@ router.get("/hashtag/:tag", protect, postController.getPostsByHashtag); // ← a
 router.get("/feed", protect, postController.getFeed);
 router.get("/", protect, postController.getFeed);
 router.post("/", protect, postController.createPost);
-router.post("/:id/react", protect, postController.addReaction);
+router.post("/:id/react", protect, postController.reactToPost);
 router.post("/:id/comments", protect, postController.addComment);
 router.post("/:id/comments/:commentId/replies", protect, postController.addReply);
 router.put("/:id", protect, postController.editPost);
