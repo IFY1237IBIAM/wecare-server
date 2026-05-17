@@ -1,5 +1,5 @@
 const jwt = require("jsonwebtoken");
-
+const User = require("../models/User");
 const generateToken = (id, role) => {
   return jwt.sign({ id, role }, process.env.JWT_SECRET, {
     expiresIn: process.env.JWT_EXPIRE,
@@ -278,12 +278,13 @@ exports.refreshUser = async (req, res) => {
 
 // @route PUT /api/auth/clear-reinstated
 // Called after user sees the reinstated popup — clears the flag
+// @route PATCH /api/auth/clear-reinstated
 exports.clearReinstatedStatus = async (req, res) => {
   try {
-    const User = require("../models/User");
+    const User = require("../models/User"); // add this line
     await User.findByIdAndUpdate(req.user._id, { appealStatus: "none" });
-    return res.json({ message: "Status cleared" });
-  } catch (error) {
-    return res.status(500).json({ message: error.message });
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
   }
-};
+}
