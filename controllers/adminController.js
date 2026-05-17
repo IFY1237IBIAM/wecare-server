@@ -5,7 +5,6 @@ const Notification = require("../models/Notification");
 const AdminAction = require("../models/AdminAction");
 const Appeal = require("../models/Appeal");
 
-// @route GET /api/admin/reported-posts
 exports.getReportedPosts = async (req, res) => {
   try {
     const reports = await Report.aggregate([
@@ -51,7 +50,6 @@ exports.getReportedPosts = async (req, res) => {
   }
 };
 
-// @route POST /api/admin/delete-post
 exports.deleteReportedPost = async (req, res) => {
   try {
     const { postId, reason, notifyUser } = req.body;
@@ -66,7 +64,6 @@ exports.deleteReportedPost = async (req, res) => {
     let newViolationCount = 0;
 
     if (postAuthor) {
-      // Only count violation if this post hasn't been counted before
       const alreadyCounted = await AdminAction.findOne({
         targetPost: postId,
         action: "delete_post",
@@ -78,16 +75,10 @@ exports.deleteReportedPost = async (req, res) => {
 
       newViolationCount = postAuthor.confirmedViolations;
 
-      // Auto-ban after 3 confirmed violations
       if (postAuthor.confirmedViolations >= 3 && !postAuthor.isBanned) {
         postAuthor.isBanned = true;
         userBanned = true;
-
-        // ── CRITICAL FIX: reset appealStatus on every new ban ──
-        // This ensures old "reinstated" status never leaks into a new ban cycle
         postAuthor.appealStatus = "none";
-
-        // Delete any old appeal records so the new ban starts a fresh cycle
         await Appeal.deleteMany({ user: postAuthor._id });
       }
 
@@ -147,7 +138,6 @@ exports.deleteReportedPost = async (req, res) => {
   }
 };
 
-// @route GET /api/admin/banned-users
 exports.getBannedUsers = async (req, res) => {
   try {
     const bannedUsers = await User.find({ isBanned: true })
@@ -185,7 +175,6 @@ exports.getBannedUsers = async (req, res) => {
           bannedBy: lastAction?.adminPseudonym || "System",
           hasRejectedAppeal: !!rejectedAppeal,
           hasPendingAppeal: !!pendingAppeal,
-          // Lock unban button only if appeal was rejected in THIS ban cycle
           unbanLocked: user.appealStatus === "permanently_banned",
         };
       })
@@ -197,7 +186,6 @@ exports.getBannedUsers = async (req, res) => {
   }
 };
 
-// @route POST /api/admin/dismiss-report
 exports.dismissReport = async (req, res) => {
   try {
     const { postId, reason } = req.body;
@@ -219,7 +207,6 @@ exports.dismissReport = async (req, res) => {
   }
 };
 
-// @route POST /api/admin/unban-user
 exports.unbanUser = async (req, res) => {
   try {
     const { pseudonym, resetViolations } = req.body;
@@ -232,13 +219,9 @@ exports.unbanUser = async (req, res) => {
     if (resetViolations) {
       user.confirmedViolations = 0;
     }
-
-    // ── CRITICAL FIX: always reset appealStatus on manual unban ──
-    user.appealStatus = "none";
-
+    user.appealStatus = "reinstated";
     await user.save({ validateBeforeSave: false });
 
-    // Delete old appeal records so next ban cycle is clean
     await Appeal.deleteMany({ user: user._id });
 
     await Notification.create({
@@ -273,7 +256,6 @@ exports.unbanUser = async (req, res) => {
   }
 };
 
-// @route GET /api/admin/user-info/:pseudonym
 exports.getUserInfo = async (req, res) => {
   try {
     const user = await User.findOne({ pseudonym: req.params.pseudonym })
@@ -300,7 +282,6 @@ exports.getUserInfo = async (req, res) => {
   }
 };
 
-// @route GET /api/admin/actions
 exports.getAdminActions = async (req, res) => {
   try {
     const actions = await AdminAction.find()
@@ -312,7 +293,6 @@ exports.getAdminActions = async (req, res) => {
   }
 };
 
-// @route GET /api/admin/stats
 exports.getAdminStats = async (req, res) => {
   try {
     const totalUsers = await User.countDocuments({ role: "user" });
@@ -321,6 +301,18 @@ exports.getAdminStats = async (req, res) => {
     const pendingReports = await Report.countDocuments({ status: "pending" });
     const totalActions = await AdminAction.countDocuments();
     return res.json({ totalUsers, bannedUsers, totalPosts, pendingReports, totalActions });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+// @route GET /api/admin/appeals
+exports.getAppeals = async (req, res) => {
+  try {
+    const appeals = await Appeal.find()
+      .sort({ createdAt: -1 })
+      .limit(50);
+    return res.json({ appeals });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }

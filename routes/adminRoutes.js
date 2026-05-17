@@ -10,10 +10,7 @@ router.get("/banned-users", adminController.getBannedUsers);
 router.get("/user-info/:pseudonym", adminController.getUserInfo);
 router.get("/actions", adminController.getAdminActions);
 router.get("/stats", adminController.getAdminStats);
-
-// Comment these out since the functions don't exist yet
-// router.get("/appeals", adminController.getAppeals); 
-// router.post("/ban-user", adminController.banUser);
+router.get("/appeals", adminController.getAppeals);
 
 router.post("/delete-post", adminController.deleteReportedPost);
 router.post("/dismiss-report", adminController.dismissReport);
