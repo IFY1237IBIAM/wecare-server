@@ -5,11 +5,14 @@ const dotenv = require("dotenv");
 const helmet = require("helmet");
 const cors = require("cors");
 const rateLimit = require("express-rate-limit");
+const { runCleanup } = require("./utils/cleanupJob");
 const connectDB = require("./config/db");
 
 dotenv.config();
 connectDB();
-
+// Run cleanup once on startup then every 24 hours
+runCleanup();
+setInterval(runCleanup, 24 * 60 * 60 * 1000);
 const app = express();
 const httpServer = http.createServer(app);
 

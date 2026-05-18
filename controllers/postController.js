@@ -536,6 +536,7 @@ exports.editComment = async (req, res) => {
 };
 
 // @route DELETE /api/posts/:id/comments/:commentId
+// @route DELETE /api/posts/:id/comments/:commentId
 exports.deleteComment = async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
@@ -544,7 +545,6 @@ exports.deleteComment = async (req, res) => {
     const comment = post.comments.id(req.params.commentId);
     if (!comment) return res.status(404).json({ message: "Comment not found" });
 
-    // Only comment author or post author can delete
     const isCommentAuthor = comment.author.toString() === req.user._id.toString();
     const isPostAuthor = post.author.toString() === req.user._id.toString();
 
@@ -552,12 +552,13 @@ exports.deleteComment = async (req, res) => {
       return res.status(403).json({ message: "Not authorized to delete this comment" });
     }
 
-    // Soft delete — keep the comment shell so replies are preserved
+    // Soft delete — set deletedAt for cleanup job
     comment.text = "This comment was deleted.";
     comment.deleted = true;
+    comment.deletedAt = new Date(); // ← new
+
     await post.save({ validateBeforeSave: false });
 
-    // Emit real-time event
     if (req.io) {
       req.io.to(`post:${req.params.id}`).emit("comment_deleted", {
         postId: req.params.id,
@@ -570,6 +571,7 @@ exports.deleteComment = async (req, res) => {
     return res.status(500).json({ message: error.message });
   }
 };
+
 
 // @route PUT /api/posts/:id/comments/:commentId/replies/:replyId
 exports.editReply = async (req, res) => {
@@ -615,6 +617,7 @@ exports.editReply = async (req, res) => {
 };
 
 // @route DELETE /api/posts/:id/comments/:commentId/replies/:replyId
+// @route DELETE /api/posts/:id/comments/:commentId/replies/:replyId
 exports.deleteReply = async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
@@ -633,9 +636,11 @@ exports.deleteReply = async (req, res) => {
       return res.status(403).json({ message: "Not authorized to delete this reply" });
     }
 
-    // Soft delete
+    // Soft delete — set deletedAt for cleanup job
     reply.text = "This reply was deleted.";
     reply.deleted = true;
+    reply.deletedAt = new Date(); // ← new
+
     await post.save({ validateBeforeSave: false });
 
     if (req.io) {
