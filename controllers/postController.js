@@ -96,6 +96,7 @@ exports.getFeed = async (req, res) => {
   }
 };
 
+
 // NEW: @route GET /api/posts/hashtag/:tag
 exports.getPostsByHashtag = async (req, res) => {
   try {
@@ -487,6 +488,165 @@ exports.searchPosts = async (req, res) => {
       return {...obj, reactions, reactionCounts, totalReactions: reactions.length };
     });
     return res.json({ posts: postsWithReactions, count: postsWithReactions.length });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+
+// @route PUT /api/posts/:id/comments/:commentId
+exports.editComment = async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (!text?.trim()) return res.status(400).json({ message: "Text is required" });
+
+    const { analyzeContent } = require("../middleware/contentModerator");
+    const mod = await analyzeContent(text);
+    if (mod.autoReject) return res.status(400).json({ message: "Comment violates community guidelines." });
+
+    const post = await Post.findById(req.params.id);
+    if (!post) return res.status(404).json({ message: "Post not found" });
+
+    const comment = post.comments.id(req.params.commentId);
+    if (!comment) return res.status(404).json({ message: "Comment not found" });
+
+    // Only comment author can edit
+    if (comment.author.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: "Not authorized to edit this comment" });
+    }
+
+    comment.text = text.trim();
+    comment.edited = true;
+    await post.save({ validateBeforeSave: false });
+
+    // Emit real-time event
+    if (req.io) {
+      req.io.to(`post:${req.params.id}`).emit("comment_updated", {
+        postId: req.params.id,
+        commentId: req.params.commentId,
+        text: comment.text,
+        edited: true,
+      });
+    }
+
+    return res.json({ message: "Comment updated 💜", comment });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+// @route DELETE /api/posts/:id/comments/:commentId
+exports.deleteComment = async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id);
+    if (!post) return res.status(404).json({ message: "Post not found" });
+
+    const comment = post.comments.id(req.params.commentId);
+    if (!comment) return res.status(404).json({ message: "Comment not found" });
+
+    // Only comment author or post author can delete
+    const isCommentAuthor = comment.author.toString() === req.user._id.toString();
+    const isPostAuthor = post.author.toString() === req.user._id.toString();
+
+    if (!isCommentAuthor && !isPostAuthor) {
+      return res.status(403).json({ message: "Not authorized to delete this comment" });
+    }
+
+    // Soft delete — keep the comment shell so replies are preserved
+    comment.text = "This comment was deleted.";
+    comment.deleted = true;
+    await post.save({ validateBeforeSave: false });
+
+    // Emit real-time event
+    if (req.io) {
+      req.io.to(`post:${req.params.id}`).emit("comment_deleted", {
+        postId: req.params.id,
+        commentId: req.params.commentId,
+      });
+    }
+
+    return res.json({ message: "Comment deleted 💜" });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+// @route PUT /api/posts/:id/comments/:commentId/replies/:replyId
+exports.editReply = async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (!text?.trim()) return res.status(400).json({ message: "Text is required" });
+
+    const { analyzeContent } = require("../middleware/contentModerator");
+    const mod = await analyzeContent(text);
+    if (mod.autoReject) return res.status(400).json({ message: "Reply violates community guidelines." });
+
+    const post = await Post.findById(req.params.id);
+    if (!post) return res.status(404).json({ message: "Post not found" });
+
+    const comment = post.comments.id(req.params.commentId);
+    if (!comment) return res.status(404).json({ message: "Comment not found" });
+
+    const reply = comment.replies.id(req.params.replyId);
+    if (!reply) return res.status(404).json({ message: "Reply not found" });
+
+    if (reply.author.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: "Not authorized to edit this reply" });
+    }
+
+    reply.text = text.trim();
+    reply.edited = true;
+    await post.save({ validateBeforeSave: false });
+
+    if (req.io) {
+      req.io.to(`post:${req.params.id}`).emit("reply_updated", {
+        postId: req.params.id,
+        commentId: req.params.commentId,
+        replyId: req.params.replyId,
+        text: reply.text,
+        edited: true,
+      });
+    }
+
+    return res.json({ message: "Reply updated 💜", reply });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+// @route DELETE /api/posts/:id/comments/:commentId/replies/:replyId
+exports.deleteReply = async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id);
+    if (!post) return res.status(404).json({ message: "Post not found" });
+
+    const comment = post.comments.id(req.params.commentId);
+    if (!comment) return res.status(404).json({ message: "Comment not found" });
+
+    const reply = comment.replies.id(req.params.replyId);
+    if (!reply) return res.status(404).json({ message: "Reply not found" });
+
+    const isReplyAuthor = reply.author.toString() === req.user._id.toString();
+    const isPostAuthor = post.author.toString() === req.user._id.toString();
+
+    if (!isReplyAuthor && !isPostAuthor) {
+      return res.status(403).json({ message: "Not authorized to delete this reply" });
+    }
+
+    // Soft delete
+    reply.text = "This reply was deleted.";
+    reply.deleted = true;
+    await post.save({ validateBeforeSave: false });
+
+    if (req.io) {
+      req.io.to(`post:${req.params.id}`).emit("reply_deleted", {
+        postId: req.params.id,
+        commentId: req.params.commentId,
+        replyId: req.params.replyId,
+      });
+    }
+
+    return res.json({ message: "Reply deleted 💜" });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
