@@ -24,9 +24,9 @@ exports.createPost = async (req, res) => {
 
     // Extract hashtags from content — max 5, lowercase, deduplicate
     const extracted = (content.match(/#\w+/g) || [])
-     .map((t) => t.toLowerCase())
-     .filter((t) => t.length <= 32)
-     .slice(0, 5);
+    .map((t) => t.toLowerCase())
+    .filter((t) => t.length <= 32)
+    .slice(0, 5);
     const hashtags = [...new Set(extracted)];
 
     const post = await Post.create({
@@ -37,6 +37,7 @@ exports.createPost = async (req, res) => {
       hashtags,
       flagged: modResult.flags.length > 0,
       flagType: modResult.flags[0]?.type || null,
+      commentCount: 0 // ← added
     });
 
     const obj = post.toObject();
@@ -74,9 +75,8 @@ exports.getFeed = async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const lastId = req.query.lastId;
     const query = lastId
-      ? { _id: { $lt: lastId } }
+     ? { _id: { $lt: lastId } }
       : {};
-
 
     const posts = await Post.find(query).sort({ createdAt: -1 }).limit(limit).select("-author");
 
@@ -96,7 +96,6 @@ exports.getFeed = async (req, res) => {
   }
 };
 
-
 // NEW: @route GET /api/posts/hashtag/:tag
 exports.getPostsByHashtag = async (req, res) => {
   try {
@@ -111,9 +110,9 @@ exports.getPostsByHashtag = async (req, res) => {
     if (lastId) query._id = { $lt: lastId };
 
     const posts = await Post.find(query)
-     .sort({ createdAt: -1 })
-     .limit(limit)
-     .select("-author");
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .select("-author");
 
     const postsWithReactions = posts.map((post) => {
       const obj = post.toObject();
@@ -220,7 +219,7 @@ exports.reactToPost = async (req, res) => {
 
     return res.json({
       message: "Reaction updated 💜",
-     ...payload
+    ...payload
     });
   } catch (error) {
     return res.status(500).json({ message: error.message });
@@ -255,6 +254,7 @@ exports.addComment = async (req, res) => {
             createdAt: new Date(),
           },
         },
+        $inc: { commentCount: 1 } // ← added
       },
       { new: true, runValidators: false }
     );
@@ -264,7 +264,7 @@ exports.addComment = async (req, res) => {
     const payload = {
       postId: req.params.id,
       comment: {...newComment.toObject(), replies: [] },
-      totalComments: updated.comments.reduce((total, c) => total + 1 + (c.replies?.length || 0), 0),
+      totalComments: updated.commentCount // ← changed
     };
 
     if (req.io) {
@@ -331,16 +331,15 @@ exports.addReply = async (req, res) => {
       createdAt: new Date(),
     });
 
+    post.commentCount = (post.commentCount || 0) + 1; // ← added
     await post.save({ validateBeforeSave: false });
     const newReply = comment.replies[comment.replies.length - 1];
-
-    const totalComments = post.comments.reduce((total, c) => total + 1 + (c.replies?.length || 0), 0);
 
     const payload = {
       postId: req.params.id,
       commentId: req.params.commentId,
       reply: newReply.toObject(),
-      totalComments,
+      totalComments: post.commentCount // ← changed
     };
 
     if (req.io) {
@@ -392,9 +391,9 @@ exports.editPost = async (req, res) => {
       post.content = content;
       // Re-extract hashtags on edit
       const extracted = (content.match(/#\w+/g) || [])
-       .map((t) => t.toLowerCase())
-       .filter((t) => t.length <= 32)
-       .slice(0, 5);
+      .map((t) => t.toLowerCase())
+      .filter((t) => t.length <= 32)
+      .slice(0, 5);
       post.hashtags = [...new Set(extracted)];
     }
     if (mood) post.mood = mood;
@@ -493,7 +492,6 @@ exports.searchPosts = async (req, res) => {
   }
 };
 
-
 // @route PUT /api/posts/:id/comments/:commentId
 exports.editComment = async (req, res) => {
   try {
@@ -511,7 +509,7 @@ exports.editComment = async (req, res) => {
     if (!comment) return res.status(404).json({ message: "Comment not found" });
 
     // Only comment author can edit
-    if (comment.author.toString() !== req.user._id.toString()) {
+    if (comment.author.toString()!== req.user._id.toString()) {
       return res.status(403).json({ message: "Not authorized to edit this comment" });
     }
 
@@ -536,7 +534,6 @@ exports.editComment = async (req, res) => {
 };
 
 // @route DELETE /api/posts/:id/comments/:commentId
-// @route DELETE /api/posts/:id/comments/:commentId
 exports.deleteComment = async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
@@ -548,30 +545,42 @@ exports.deleteComment = async (req, res) => {
     const isCommentAuthor = comment.author.toString() === req.user._id.toString();
     const isPostAuthor = post.author.toString() === req.user._id.toString();
 
-    if (!isCommentAuthor && !isPostAuthor) {
+    if (!isCommentAuthor &&!isPostAuthor) {
       return res.status(403).json({ message: "Not authorized to delete this comment" });
     }
+
+    const activeReplies = comment.replies? comment.replies.filter(r =>!r.deleted).length : 0; // ← added
 
     // Soft delete — set deletedAt for cleanup job
     comment.text = "This comment was deleted.";
     comment.deleted = true;
-    comment.deletedAt = new Date(); // ← new
+    comment.deletedAt = new Date();
 
+    // Soft delete all replies too
+    comment.replies.forEach(r => {
+      if (!r.deleted) {
+        r.deleted = true;
+        r.deletedAt = new Date();
+        r.text = "This reply was deleted.";
+      }
+    });
+
+    post.commentCount = (post.commentCount || 0) - (1 + activeReplies); // ← added
     await post.save({ validateBeforeSave: false });
 
     if (req.io) {
       req.io.to(`post:${req.params.id}`).emit("comment_deleted", {
         postId: req.params.id,
         commentId: req.params.commentId,
+        totalComments: post.commentCount // ← added
       });
     }
 
-    return res.json({ message: "Comment deleted 💜" });
+    return res.json({ message: "Comment deleted 💜", totalComments: post.commentCount });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
 };
-
 
 // @route PUT /api/posts/:id/comments/:commentId/replies/:replyId
 exports.editReply = async (req, res) => {
@@ -592,7 +601,7 @@ exports.editReply = async (req, res) => {
     const reply = comment.replies.id(req.params.replyId);
     if (!reply) return res.status(404).json({ message: "Reply not found" });
 
-    if (reply.author.toString() !== req.user._id.toString()) {
+    if (reply.author.toString()!== req.user._id.toString()) {
       return res.status(403).json({ message: "Not authorized to edit this reply" });
     }
 
@@ -617,7 +626,6 @@ exports.editReply = async (req, res) => {
 };
 
 // @route DELETE /api/posts/:id/comments/:commentId/replies/:replyId
-// @route DELETE /api/posts/:id/comments/:commentId/replies/:replyId
 exports.deleteReply = async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
@@ -632,15 +640,16 @@ exports.deleteReply = async (req, res) => {
     const isReplyAuthor = reply.author.toString() === req.user._id.toString();
     const isPostAuthor = post.author.toString() === req.user._id.toString();
 
-    if (!isReplyAuthor && !isPostAuthor) {
+    if (!isReplyAuthor &&!isPostAuthor) {
       return res.status(403).json({ message: "Not authorized to delete this reply" });
     }
 
     // Soft delete — set deletedAt for cleanup job
     reply.text = "This reply was deleted.";
     reply.deleted = true;
-    reply.deletedAt = new Date(); // ← new
+    reply.deletedAt = new Date();
 
+    post.commentCount = (post.commentCount || 0) - 1; // ← added
     await post.save({ validateBeforeSave: false });
 
     if (req.io) {
@@ -648,10 +657,11 @@ exports.deleteReply = async (req, res) => {
         postId: req.params.id,
         commentId: req.params.commentId,
         replyId: req.params.replyId,
+        totalComments: post.commentCount // ← added
       });
     }
 
-    return res.json({ message: "Reply deleted 💜" });
+    return res.json({ message: "Reply deleted 💜", totalComments: post.commentCount });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
