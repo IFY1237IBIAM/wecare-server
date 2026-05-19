@@ -147,7 +147,6 @@ exports.getBlockedUsers = async (req, res) => {
   }
 };
 
-// PUT /api/settings/change-password
 exports.changePassword = async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
@@ -163,7 +162,17 @@ exports.changePassword = async (req, res) => {
 
     const user = await User.findById(req.user._id).select("+password");
     const isMatch = await user.matchPassword(currentPassword);
-    if (!isMatch) return res.status(401).json({ message: "Current password is incorrect" });
+    if (!isMatch) {
+      return res.status(401).json({ message: "Current password is incorrect" });
+    }
+
+    // ── NEW: block same password ──
+    const isSameAsOld = await user.matchPassword(newPassword);
+    if (isSameAsOld) {
+      return res.status(400).json({
+        message: "New password cannot be the same as your current password",
+      });
+    }
 
     user.password = newPassword;
     await user.save();

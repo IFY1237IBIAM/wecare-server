@@ -71,26 +71,32 @@ exports.createPost = async (req, res) => {
 // @route GET /api/posts
 exports.getFeed = async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 10;
+    const limit = parseInt(req.query.limit) || 15;
     const lastId = req.query.lastId;
-    const query = lastId
-      ? { _id: { $lt: lastId } }
-      : {};
+    const query = {};
+    if (lastId) query._id = { $lt: lastId };
 
-
-    const posts = await Post.find(query).sort({ createdAt: -1 }).limit(limit).select("-author");
+    const posts = await Post.find(query)
+      .sort({ createdAt: -1 })
+      .limit(limit);
 
     const postsWithReactions = posts.map((post) => {
       const obj = post.toObject();
-      const reactions = Array.isArray(obj.reactions)? obj.reactions : [];
+      const reactions = Array.isArray(obj.reactions) ? obj.reactions : [];
       const reactionCounts = {};
       reactions.forEach((r) => {
         if (r.type) reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1;
       });
-      return {...obj, reactions, reactionCounts, totalReactions: reactions.length };
+      return {
+        ...obj,
+        reactions,
+        reactionCounts,
+        totalReactions: reactions.length,
+        authorId: obj.author?.toString(), // ← expose authorId for client-side block check
+      };
     });
 
-    return res.json({ posts: postsWithReactions, count: posts.length });
+    return res.json({ posts: postsWithReactions });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
