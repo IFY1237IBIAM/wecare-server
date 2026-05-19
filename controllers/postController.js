@@ -233,14 +233,16 @@ exports.addComment = async (req, res) => {
     const { text } = req.body;
     if (!text) return res.status(400).json({ message: "Comment text is required" });
 
+    const { analyzeContent } = require("../middleware/contentModerator");
     const modResult = await analyzeContent(text);
     if (modResult.autoReject) {
-      return res.status(400).json({ message: "Your comment contains content that violates our community guidelines." });
+      return res.status(400).json({ message: "Comment violates community guidelines." });
     }
 
     const post = await Post.findById(req.params.id);
     if (!post) return res.status(404).json({ message: "Post not found" });
-    if (post.comments.length >= 50) return res.status(400).json({ message: "Comment limit reached" });
+
+    const isPostAuthor = post.author.toString() === req.user._id.toString();
 
     const updated = await Post.findByIdAndUpdate(
       req.params.id,
@@ -250,11 +252,11 @@ exports.addComment = async (req, res) => {
             author: req.user._id,
             pseudonym: req.user.pseudonym,
             text,
-            parentId: null,
-            isPostAuthor: post.author.toString() === req.user._id.toString(),
+            isPostAuthor,
             createdAt: new Date(),
           },
         },
+        $inc: { commentCount: 1 }, // ← increment
       },
       { new: true, runValidators: false }
     );
@@ -263,38 +265,44 @@ exports.addComment = async (req, res) => {
 
     const payload = {
       postId: req.params.id,
-      comment: {...newComment.toObject(), replies: [] },
-      totalComments: updated.comments.reduce((total, c) => total + 1 + (c.replies?.length || 0), 0),
+      comment: { ...newComment.toObject(), replies: [] },
+      totalComments: updated.commentCount,
     };
 
     if (req.io) {
       req.io.to(`post:${req.params.id}`).emit("comment_added", payload);
     }
 
+    // Notify post author
     try {
-      const freshPost = await Post.findById(req.params.id).select("author content");
-      if (freshPost && freshPost.author.toString()!== req.user._id.toString()) {
+      if (post.author.toString() !== req.user._id.toString()) {
+        const Notification = require("../models/Notification");
         await Notification.create({
-          recipient: freshPost.author,
+          recipient: post.author,
           sender: req.user._id,
           senderPseudonym: req.user.pseudonym,
           type: "comment",
-          post: req.params.id,
-          postPreview: freshPost.content?.substring(0, 60),
+          post: post._id,
+          postPreview: post.content?.substring(0, 60),
           commentText: text.substring(0, 100),
         });
 
-        sendPushNotification(freshPost.author, {
+        const { sendPushNotification } = require("../utils/sendPush");
+        await sendPushNotification(post.author, {
           title: `${req.user.pseudonym} commented on your post`,
           body: text.substring(0, 80),
-          data: { screen: "Post", postId: req.params.id },
-        }).catch(err => console.log("Push error:", err.message));
+          data: { screen: "Feed", postId: post._id.toString() },
+        });
       }
     } catch (e) {
-      console.log("Notification error:", e.message);
+      console.log("Comment notification error:", e.message);
     }
 
-    return res.status(201).json({ message: "Comment added 💜", comment: newComment });
+    return res.status(201).json({
+      message: "Comment added 💜",
+      comment: newComment,
+      commentCount: updated.commentCount,
+    });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
@@ -306,9 +314,10 @@ exports.addReply = async (req, res) => {
     const { text, replyingTo } = req.body;
     if (!text) return res.status(400).json({ message: "Reply text is required" });
 
+    const { analyzeContent } = require("../middleware/contentModerator");
     const modResult = await analyzeContent(text);
     if (modResult.autoReject) {
-      return res.status(400).json({ message: "Your reply contains content that violates our community guidelines." });
+      return res.status(400).json({ message: "Reply violates community guidelines." });
     }
 
     const post = await Post.findById(req.params.id);
@@ -316,60 +325,70 @@ exports.addReply = async (req, res) => {
 
     const comment = post.comments.id(req.params.commentId);
     if (!comment) return res.status(404).json({ message: "Comment not found" });
+
     if (comment.replies && comment.replies.length >= 50) {
       return res.status(400).json({ message: "Reply limit reached" });
     }
 
     const isPostAuthor = post.author.toString() === req.user._id.toString();
+
     comment.replies.push({
       author: req.user._id,
       pseudonym: req.user.pseudonym,
       text,
-      parentId: comment._id,
       isPostAuthor,
       replyingTo: replyingTo || null,
       createdAt: new Date(),
     });
 
-    await post.save({ validateBeforeSave: false });
-    const newReply = comment.replies[comment.replies.length - 1];
+    // increment commentCount
+    post.commentCount = (post.commentCount || 0) + 1;
 
-    const totalComments = post.comments.reduce((total, c) => total + 1 + (c.replies?.length || 0), 0);
+    await post.save({ validateBeforeSave: false });
+
+    const newReply = comment.replies[comment.replies.length - 1];
 
     const payload = {
       postId: req.params.id,
       commentId: req.params.commentId,
       reply: newReply.toObject(),
-      totalComments,
+      totalComments: post.commentCount,
     };
 
     if (req.io) {
       req.io.to(`post:${req.params.id}`).emit("reply_added", payload);
     }
 
+    // Notify comment author
     try {
-      if (comment.author.toString()!== req.user._id.toString()) {
+      if (comment.author.toString() !== req.user._id.toString()) {
+        const Notification = require("../models/Notification");
         await Notification.create({
           recipient: comment.author,
           sender: req.user._id,
           senderPseudonym: req.user.pseudonym,
           type: "reply",
-          post: req.params.id,
+          post: post._id,
           postPreview: post.content?.substring(0, 60),
           commentText: text.substring(0, 80),
         });
 
-        sendPushNotification(comment.author, {
+        const { sendPushNotification } = require("../utils/sendPush");
+        await sendPushNotification(comment.author, {
           title: `${req.user.pseudonym} replied to your comment`,
           body: text.substring(0, 80),
-          data: { screen: "Post", postId: req.params.id, commentId: comment._id.toString() },
-        }).catch(err => console.log("Push error:", err.message));
+          data: { screen: "Feed", postId: post._id.toString() },
+        });
       }
     } catch (e) {
       console.log("Reply notification error:", e.message);
     }
 
-    return res.status(201).json({ message: "Reply added 💜", reply: newReply });
+    return res.status(201).json({
+      message: "Reply added 💜",
+      reply: newReply,
+      commentCount: post.commentCount,
+    });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
@@ -535,7 +554,9 @@ exports.editComment = async (req, res) => {
   }
 };
 
-// @route DELETE /api/posts/:id/comments/:commentId
+
+
+
 // @route DELETE /api/posts/:id/comments/:commentId
 exports.deleteComment = async (req, res) => {
   try {
@@ -552,10 +573,25 @@ exports.deleteComment = async (req, res) => {
       return res.status(403).json({ message: "Not authorized to delete this comment" });
     }
 
-    // Soft delete — set deletedAt for cleanup job
+    // Count: 1 for the comment + all active replies under it
+    const activeReplies = comment.replies.filter((r) => !r.deleted).length;
+    const countToRemove = 1 + activeReplies;
+
+    // Soft delete comment AND all its replies
     comment.text = "This comment was deleted.";
     comment.deleted = true;
-    comment.deletedAt = new Date(); // ← new
+    comment.deletedAt = new Date();
+
+    // Soft delete all replies under this comment too
+    for (const reply of comment.replies) {
+      if (!reply.deleted) {
+        reply.text = "This reply was deleted.";
+        reply.deleted = true;
+        reply.deletedAt = new Date();
+      }
+    }
+
+    post.commentCount = Math.max(0, (post.commentCount || 0) - countToRemove);
 
     await post.save({ validateBeforeSave: false });
 
@@ -563,10 +599,14 @@ exports.deleteComment = async (req, res) => {
       req.io.to(`post:${req.params.id}`).emit("comment_deleted", {
         postId: req.params.id,
         commentId: req.params.commentId,
+        commentCount: post.commentCount,
       });
     }
 
-    return res.json({ message: "Comment deleted 💜" });
+    return res.json({
+      message: "Comment deleted 💜",
+      commentCount: post.commentCount,
+    });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
@@ -616,7 +656,9 @@ exports.editReply = async (req, res) => {
   }
 };
 
-// @route DELETE /api/posts/:id/comments/:commentId/replies/:replyId
+
+
+
 // @route DELETE /api/posts/:id/comments/:commentId/replies/:replyId
 exports.deleteReply = async (req, res) => {
   try {
@@ -636,10 +678,11 @@ exports.deleteReply = async (req, res) => {
       return res.status(403).json({ message: "Not authorized to delete this reply" });
     }
 
-    // Soft delete — set deletedAt for cleanup job
     reply.text = "This reply was deleted.";
     reply.deleted = true;
-    reply.deletedAt = new Date(); // ← new
+    reply.deletedAt = new Date();
+
+    post.commentCount = Math.max(0, (post.commentCount || 0) - 1);
 
     await post.save({ validateBeforeSave: false });
 
@@ -648,10 +691,14 @@ exports.deleteReply = async (req, res) => {
         postId: req.params.id,
         commentId: req.params.commentId,
         replyId: req.params.replyId,
+        commentCount: post.commentCount,
       });
     }
 
-    return res.json({ message: "Reply deleted 💜" });
+    return res.json({
+      message: "Reply deleted 💜",
+      commentCount: post.commentCount,
+    });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }

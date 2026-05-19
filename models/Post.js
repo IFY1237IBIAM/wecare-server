@@ -53,6 +53,7 @@ const postSchema = new mongoose.Schema(
     },
     reactions: [reactionSchema],
     comments: [commentSchema],
+    commentCount: { type: Number, default: 0 },
     flagged: { type: Boolean, default: false },
     flagType: { type: String, default: null },
     edited: { type: Boolean, default: false },

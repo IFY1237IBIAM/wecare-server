@@ -124,6 +124,7 @@ app.use("/api/admin", require("./routes/adminRoutes"));
 app.use("/api/checkin", require("./routes/checkInRoutes"));
 app.use("/api/groups", groupLimiter, require("./routes/groupRoutes"));
 app.use("/api/appeals", require("./routes/appealRoutes"));
+app.use("/api/settings", require("./routes/settingsRoutes"));
 
 // Error handler - you had this, don't delete it
 app.use((err, req, res, next) => {
