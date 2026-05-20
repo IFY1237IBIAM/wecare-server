@@ -55,5 +55,83 @@ router.get("/history", protect, async (req, res) => {
     return res.status(500).json({ message: error.message });
   }
 });
+// @route GET /api/checkin/streak
+router.get("/streak", protect, async (req, res) => {
+  try {
+    const checkIns = await CheckIn.find({ user: req.user._id })
+      .sort({ date: -1 })
+      .select("date mood");
 
+    if (checkIns.length === 0) {
+      return res.json({
+        currentStreak: 0,
+        longestStreak: 0,
+        totalDays: 0,
+      });
+    }
+
+    const dates = checkIns.map((c) => c.date);
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    const yesterday = new Date(Date.now() - 86400000)
+      .toISOString()
+      .slice(0, 10);
+
+    // Current streak
+    let currentStreak = 0;
+
+    let checkDate =
+      dates[0] === today || dates[0] === yesterday
+        ? dates[0]
+        : null;
+
+    if (checkDate) {
+      currentStreak = 1;
+
+      for (let i = 1; i < dates.length; i++) {
+        const prev = new Date(checkDate);
+
+        prev.setDate(prev.getDate() - 1);
+
+        const prevStr = prev.toISOString().slice(0, 10);
+
+        if (dates[i] === prevStr) {
+          currentStreak++;
+          checkDate = prevStr;
+        } else {
+          break;
+        }
+      }
+    }
+
+    // Longest streak
+    let longestStreak = 1;
+    let runningStreak = 1;
+
+    for (let i = 1; i < dates.length; i++) {
+      const prev = new Date(dates[i - 1]);
+
+      prev.setDate(prev.getDate() - 1);
+
+      if (dates[i] === prev.toISOString().slice(0, 10)) {
+        runningStreak++;
+
+        longestStreak = Math.max(longestStreak, runningStreak);
+      } else {
+        runningStreak = 1;
+      }
+    }
+
+    return res.json({
+      currentStreak,
+      longestStreak,
+      totalDays: checkIns.length,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: error.message,
+    });
+  }
+});
 module.exports = router;

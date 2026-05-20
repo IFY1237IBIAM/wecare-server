@@ -288,3 +288,45 @@ exports.clearReinstatedStatus = async (req, res) => {
     res.status(500).json({ message: e.message });
   }
 }
+
+// @route GET /api/auth/search-users?q=pseudonym
+exports.searchUsers = async (req, res) => {
+  try {
+    const User = require("../models/User");
+    const { q } = req.query;
+    if (!q || q.trim().length < 2) {
+      return res.status(400).json({ message: "Search query must be at least 2 characters" });
+    }
+
+    const users = await User.find({
+      pseudonym: { $regex: q.trim(), $options: "i" },
+      isBanned: { $ne: true },
+    })
+      .select("pseudonym avatar isOnline lastSeen showOnlineStatus createdAt")
+      .limit(20);
+
+    return res.json({ users });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+// @route PUT /api/auth/bio
+exports.updateBio = async (req, res) => {
+  try {
+    const User = require("../models/User");
+    const { bio } = req.body;
+    if (bio && bio.length > 100) {
+      return res.status(400).json({ message: "Bio cannot exceed 100 characters" });
+    }
+    const user = await User.findByIdAndUpdate(
+      req.user._id,
+      { bio: bio?.trim() || "" },
+      { new: true }
+    ).select("bio pseudonym");
+
+    return res.json({ message: "Bio updated 💜", user });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
