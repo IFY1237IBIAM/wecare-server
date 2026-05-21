@@ -1,62 +1,6 @@
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 
-const userSchema = new mongoose.Schema(
-  {
-    pseudonym: {
-      type: String,
-      required: [true, "Pseudonym is required"],
-      unique: true,
-      trim: true,
-      minlength: [3, "Pseudonym must be at least 3 characters"],
-      maxlength: [20, "Pseudonym cannot exceed 20 characters"],
-    },
-    email: {
-      type: String,
-      required: [true, "Email is required"],
-      unique: true,
-      lowercase: true,
-      trim: true,
-      match: [/^\S+@\S+\.\S+$/, "Please enter a valid email"],
-    },
-    password: {
-      type: String,
-      required: [true, "Password is required"],
-      minlength: [8, "Password must be at least 8 characters"],
-      select: false,
-    },
-    role: {
-      type: String,
-      enum: ["user", "admin", "moderator"],
-      default: "user",
-    },
-    avatar: {
-      color: { type: String, default: () => getRandomColor() },
-      shape: { type: String, default: () => getRandomShape() },
-    },
-    isVerified: { type: Boolean, default: false },
-    bio: { type: String, maxlength: 100, default: "" },
-    lastSeen: { type: Date, default: Date.now },
-    isOnline: { type: Boolean, default: false },
-    showOnlineStatus: { type: Boolean, default: true },
-    savedPosts: [{ type: mongoose.Schema.Types.ObjectId, ref: "Post" }],
-    reportCount: { type: Number, default: 0 },
-    confirmedViolations: { type: Number, default: 0 },
-    isBanned: { type: Boolean, default: false },
-    violations: {
-      type: [String],
-      default: []
-    },
-    appealStatus: {
-      type: String,
-      enum: ["none", "pending", "rejected", "accepted"],
-      default: "none"
-    },
-  },
-  { timestamps: true }
-  
-);
-
 function getRandomColor() {
   const colors = ["#A78BFA", "#60A5FA", "#34D399", "#F472B6", "#FB923C", "#E879F9"];
   return colors[Math.floor(Math.random() * colors.length)];
@@ -67,13 +11,88 @@ function getRandomShape() {
   return shapes[Math.floor(Math.random() * shapes.length)];
 }
 
+const userSchema = new mongoose.Schema(
+  {
+    pseudonym: {
+      type: String,
+      required: [true, "Pseudonym is required"],
+      unique: true,
+      trim: true,
+      minlength: [3, "Pseudonym must be at least 3 characters"],
+      maxlength: [20, "Pseudonym cannot exceed 20 characters"],
+    },
+
+    email: {
+      type: String,
+      required: [true, "Email is required"],
+      unique: true,
+      lowercase: true,
+      trim: true,
+      match: [/^\S+@\S+\.\S+$/, "Please enter a valid email"],
+    },
+
+    password: {
+      type: String,
+      required: [true, "Password is required"],
+      minlength: [8, "Password must be at least 8 characters"],
+      select: false,
+    },
+
+    role: {
+      type: String,
+      enum: ["user", "admin", "moderator"],
+      default: "user",
+    },
+
+    avatar: {
+      color: { type: String, default: () => getRandomColor() },
+      shape: { type: String, default: () => getRandomShape() },
+    },
+
+    // Email verification
+    isVerified: { type: Boolean, default: false },
+    emailVerificationToken: { type: String, select: false },
+    emailVerificationCode: { type: String, select: false },
+    emailVerificationExpiry: { type: Date, select: false },
+
+    // Password reset
+    passwordResetCode: { type: String, select: false },
+    passwordResetExpiry: { type: Date, select: false },
+
+    bio: { type: String, maxlength: 100, default: "" },
+
+    lastSeen: { type: Date, default: Date.now },
+    isOnline: { type: Boolean, default: false },
+    showOnlineStatus: { type: Boolean, default: true },
+
+    savedPosts: [{ type: mongoose.Schema.Types.ObjectId, ref: "Post" }],
+
+    reportCount: { type: Number, default: 0 },
+    confirmedViolations: { type: Number, default: 0 },
+
+    isBanned: { type: Boolean, default: false },
+
+    violations: { type: [String], default: [] },
+
+    appealStatus: {
+      type: String,
+      enum: ["none", "pending", "rejected", "accepted"],
+      default: "none",
+    },
+  },
+  { timestamps: true }
+);
+
+// Password hashing
 userSchema.pre("save", async function (next) {
   if (!this.isModified("password")) return next();
+
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);
   next();
 });
 
+// Password check
 userSchema.methods.matchPassword = async function (enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
 };

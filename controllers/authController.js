@@ -1,60 +1,97 @@
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
+const {
+  validateEmailDeliverable,
+  generateSixDigitCode,
+  generateSecureToken,
+  sendWelcomeEmail,
+} = require("../utils/email");
+
 const generateToken = (id, role) => {
   return jwt.sign({ id, role }, process.env.JWT_SECRET, {
     expiresIn: process.env.JWT_EXPIRE,
   });
 };
 
+// ─── Signup with email verification ──────────────────────────────────────────
 exports.signup = async (req, res) => {
   try {
-    const User = require("../models/User");
     const { pseudonym, email, password } = req.body;
 
+    // 1. Basic presence checks
     if (!pseudonym || !email || !password) {
-      return res.status(400).json({ message: "All fields are required" });
+      return res.status(400).json({ message: "All fields are required." });
     }
 
-    const existingUser = await User.findOne({ $or: [{ email }, { pseudonym }] });
-    if (existingUser) {
-      return res.status(400).json({
-        message: existingUser.email === email
-          ? "Email already registered"
-          : "Pseudonym already taken",
-      });
+    // 2. Validate email format + MX records
+    const emailCheck = await validateEmailDeliverable(email);
+    if (!emailCheck.valid) {
+      return res.status(400).json({ message: emailCheck.message });
     }
 
-    // Auto-promote admin email from env
+    // 3. Duplicate checks
+    const existingEmail = await User.findOne({ email: email.toLowerCase().trim() });
+    if (existingEmail) {
+      return res.status(409).json({ message: "An account with this email already exists." });
+    }
+
+    const existingPseudonym = await User.findOne({ pseudonym: pseudonym.trim() });
+    if (existingPseudonym) {
+      return res.status(409).json({ message: "That pseudonym is already taken. Try another." });
+    }
+
+    // 4. Generate verification token + code
+    const verifyToken = generateSecureToken();
+    const verifyCode = generateSixDigitCode();
+    const verifyExpiry = new Date(Date.now() + 15 * 60 * 1000); // 15 min
+
+    // 5. Auto-promote admin email from env
     const isAdmin = process.env.ADMIN_EMAIL && email.toLowerCase() === process.env.ADMIN_EMAIL.toLowerCase();
 
+    // 6. Create user
     const user = await User.create({
-      pseudonym,
-      email,
+      pseudonym: pseudonym.trim(),
+      email: email.toLowerCase().trim(),
       password,
       role: isAdmin ? "admin" : "user",
+      emailVerificationToken: verifyToken,
+      emailVerificationCode: verifyCode,
+      emailVerificationExpiry: verifyExpiry,
     });
 
+    // 7. Send welcome + verification email - don't block signup if it fails
+    sendWelcomeEmail({
+      to: user.email,
+      pseudonym: user.pseudonym,
+      verifyToken,
+      sixDigitCode: verifyCode,
+    }).catch((err) => console.error("Welcome email failed (non-fatal):", err));
+
+    // 8. Issue JWT
     const token = generateToken(user._id, user.role);
 
     return res.status(201).json({
-      message: "Account created successfully! Welcome to HushCircle 💜",
-      token,
+      message: "Account created! Check your email to verify your address.",
       user: {
         id: user._id,
+        _id: user._id,
         pseudonym: user.pseudonym,
+        email: user.email,
+        isVerified: user.isVerified,
         avatar: user.avatar,
         role: user.role,
         isBanned: user.isBanned,
       },
+      token,
     });
-  } catch (error) {
-    return res.status(500).json({ message: error.message });
+  } catch (err) {
+    console.error("signup error:", err);
+    return res.status(500).json({ message: "Something went wrong. Please try again." });
   }
 };
 
 exports.login = async (req, res) => {
   try {
-    const User = require("../models/User");
     const { email, password } = req.body;
 
     if (!email || !password) {
@@ -67,8 +104,6 @@ exports.login = async (req, res) => {
     const isMatch = await user.matchPassword(password);
     if (!isMatch) return res.status(401).json({ message: "Invalid email or password" });
 
-    // If reinstated — reset appealStatus so popup shows once then clears
-    // We do NOT block login here — frontend handles which screen to show
     const token = generateToken(user._id, user.role);
 
     return res.json({
@@ -83,7 +118,6 @@ exports.login = async (req, res) => {
         isBanned: user.isBanned,
         confirmedViolations: user.confirmedViolations || 0,
         violations: user.violations || [],
-        // Always return fresh appealStatus from DB — never stale
         appealStatus: user.appealStatus || "none",
         showOnlineStatus: user.showOnlineStatus,
       },
@@ -95,7 +129,6 @@ exports.login = async (req, res) => {
 
 exports.getMe = async (req, res) => {
   try {
-    const User = require("../models/User");
     const user = await User.findById(req.user.id)
       .select("+showOnlineStatus +isOnline +lastSeen +role");
     if (!user) return res.status(404).json({ message: "User not found" });
@@ -169,7 +202,6 @@ exports.getSavedPosts = async (req, res) => {
 
 exports.updatePresence = async (req, res) => {
   try {
-    const User = require("../models/User");
     await User.findByIdAndUpdate(req.user._id, {
       isOnline: true,
       lastSeen: new Date(),
@@ -182,7 +214,6 @@ exports.updatePresence = async (req, res) => {
 
 exports.setOffline = async (req, res) => {
   try {
-    const User = require("../models/User");
     await User.findByIdAndUpdate(req.user._id, {
       isOnline: false,
       lastSeen: new Date(),
@@ -195,7 +226,6 @@ exports.setOffline = async (req, res) => {
 
 exports.toggleOnlineStatusPrivacy = async (req, res) => {
   try {
-    const User = require("../models/User");
     const user = await User.findById(req.user._id);
     if (!user) return res.status(404).json({ message: "User not found" });
     user.showOnlineStatus = !user.showOnlineStatus;
@@ -213,7 +243,6 @@ exports.toggleOnlineStatusPrivacy = async (req, res) => {
 
 exports.getUserByPseudonym = async (req, res) => {
   try {
-    const User = require("../models/User");
     const Post = require("../models/Post");
     const user = await User.findOne({ pseudonym: req.params.pseudonym })
       .select("pseudonym avatar isOnline lastSeen createdAt showOnlineStatus");
@@ -244,11 +273,8 @@ exports.getUserByPseudonym = async (req, res) => {
   }
 };
 
-// @route GET /api/auth/refresh
-// Called on app open to get fresh user state from DB
 exports.refreshUser = async (req, res) => {
   try {
-    const User = require("../models/User");
     const user = await User.findById(req.user._id)
       .select("+showOnlineStatus +isOnline +lastSeen +role +appealStatus +isBanned +confirmedViolations +violations");
 
@@ -275,13 +301,8 @@ exports.refreshUser = async (req, res) => {
   }
 };
 
-
-// @route PUT /api/auth/clear-reinstated
-// Called after user sees the reinstated popup — clears the flag
-// @route PATCH /api/auth/clear-reinstated
 exports.clearReinstatedStatus = async (req, res) => {
   try {
-    const User = require("../models/User"); // add this line
     await User.findByIdAndUpdate(req.user._id, { appealStatus: "none" });
     res.json({ success: true });
   } catch (e) {
@@ -289,10 +310,8 @@ exports.clearReinstatedStatus = async (req, res) => {
   }
 }
 
-// @route GET /api/auth/search-users?q=pseudonym
 exports.searchUsers = async (req, res) => {
   try {
-    const User = require("../models/User");
     const { q } = req.query;
     if (!q || q.trim().length < 2) {
       return res.status(400).json({ message: "Search query must be at least 2 characters" });
@@ -311,10 +330,8 @@ exports.searchUsers = async (req, res) => {
   }
 };
 
-// @route PUT /api/auth/bio
 exports.updateBio = async (req, res) => {
   try {
-    const User = require("../models/User");
     const { bio } = req.body;
     if (bio && bio.length > 100) {
       return res.status(400).json({ message: "Bio cannot exceed 100 characters" });

@@ -7,6 +7,7 @@ const cors = require("cors");
 const rateLimit = require("express-rate-limit");
 const { runCleanup } = require("./utils/cleanupJob");
 const connectDB = require("./config/db");
+const emailRoutes = require("./routes/emailRoutes");
 
 dotenv.config();
 connectDB();
@@ -125,6 +126,7 @@ app.use("/api/checkin", require("./routes/checkInRoutes"));
 app.use("/api/groups", groupLimiter, require("./routes/groupRoutes"));
 app.use("/api/appeals", require("./routes/appealRoutes"));
 app.use("/api/settings", require("./routes/settingsRoutes"));
+app.use("/api/email", emailRoutes);
 
 // Error handler - you had this, don't delete it
 app.use((err, req, res, next) => {
