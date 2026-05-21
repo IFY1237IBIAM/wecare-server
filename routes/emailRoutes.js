@@ -1,6 +1,7 @@
 const express = require("express");
 const crypto = require("crypto");
 const User = require("../models/User");
+const jwt = require("jsonwebtoken");
 const {
   validateEmailDeliverable,
   generateSixDigitCode,
@@ -26,7 +27,9 @@ router.post("/verify-email", async (req, res) => {
       }).select("+emailVerificationToken +emailVerificationExpiry");
 
       if (!user) {
-        return res.status(400).json({ message: "Verification link is invalid or has expired." });
+        return res.status(400).json({
+          message: "Verification link is invalid or has expired.",
+        });
       }
     } else if (code && email) {
       user = await User.findOne({
@@ -36,14 +39,20 @@ router.post("/verify-email", async (req, res) => {
       }).select("+emailVerificationCode +emailVerificationExpiry");
 
       if (!user) {
-        return res.status(400).json({ message: "Invalid or expired verification code." });
+        return res.status(400).json({
+          message: "Invalid or expired verification code.",
+        });
       }
     } else {
-      return res.status(400).json({ message: "Provide a verification token or code + email." });
+      return res.status(400).json({
+        message: "Provide a verification token or code + email.",
+      });
     }
 
     if (user.isVerified) {
-      return res.status(200).json({ message: "Email is already verified." });
+      return res.status(200).json({
+        message: "Email is already verified.",
+      });
     }
 
     user.isVerified = true;
@@ -52,10 +61,29 @@ router.post("/verify-email", async (req, res) => {
     user.emailVerificationExpiry = undefined;
     await user.save();
 
-    return res.status(200).json({ message: "Email verified successfully. Welcome to HushCircle 💜" });
+    const authToken = jwt.sign(
+      { id: user._id },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    return res.status(200).json({
+      message: "Email verified successfully. Welcome to HushCircle 💜",
+      token: authToken,
+      user: {
+        _id: user._id,
+        email: user.email,
+        pseudonym: user.pseudonym,
+        isVerified: user.isVerified,
+        appealStatus: user.appealStatus,
+        isBanned: user.isBanned,
+      },
+    });
   } catch (err) {
     console.error("verify-email error:", err);
-    return res.status(500).json({ message: "Something went wrong. Please try again." });
+    return res.status(500).json({
+      message: "Something went wrong. Please try again.",
+    });
   }
 });
 
