@@ -147,7 +147,7 @@ async function sendWelcomeEmail({ to, pseudonym, verifyToken, sixDigitCode }) {
     return { skipped: true };
   }
 
-  const verifyUrl = `${getAppUrl()}/verify-email?token=${verifyToken}`;
+  const verifyUrl = `hushcircle://verify-email?token=${verifyToken}`;
 
   const bodyHtml = `
     <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#EDE8F5;">

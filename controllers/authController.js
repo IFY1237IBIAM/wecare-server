@@ -41,34 +41,42 @@ exports.signup = async (req, res) => {
     }
 
     // 4. Generate verification token + code
-    const verifyToken = generateSecureToken();
-    const verifyCode = generateSixDigitCode();
-    const verifyExpiry = new Date(Date.now() + 15 * 60 * 1000); // 15 min
+const verifyToken = generateSecureToken();
+const verifyCode = generateSixDigitCode();
+const verifyExpiry = new Date(Date.now() + 15 * 60 * 1000); // 15 min
 
-    // 5. Auto-promote admin email from env
-    const isAdmin = process.env.ADMIN_EMAIL && email.toLowerCase() === process.env.ADMIN_EMAIL.toLowerCase();
+// Add app deep link (used for mobile onboarding flow)
+const verifyLink = `hushcircle://verify-email?token=${verifyToken}`;
 
-    // 6. Create user
-    const user = await User.create({
-      pseudonym: pseudonym.trim(),
-      email: email.toLowerCase().trim(),
-      password,
-      role: isAdmin ? "admin" : "user",
-      emailVerificationToken: verifyToken,
-      emailVerificationCode: verifyCode,
-      emailVerificationExpiry: verifyExpiry,
-    });
+// 5. Auto-promote admin email from env
+const isAdmin =
+  process.env.ADMIN_EMAIL &&
+  email.toLowerCase() === process.env.ADMIN_EMAIL.toLowerCase();
 
-    // 7. Send welcome + verification email - don't block signup if it fails
-    sendWelcomeEmail({
-      to: user.email,
-      pseudonym: user.pseudonym,
-      verifyToken,
-      sixDigitCode: verifyCode,
-    }).catch((err) => console.error("Welcome email failed (non-fatal):", err));
+// 6. Create user
+const user = await User.create({
+  pseudonym: pseudonym.trim(),
+  email: email.toLowerCase().trim(),
+  password,
+  role: isAdmin ? "admin" : "user",
+  emailVerificationToken: verifyToken,
+  emailVerificationCode: verifyCode,
+  emailVerificationExpiry: verifyExpiry,
+});
 
-    // 8. Issue JWT
-    const token = generateToken(user._id, user.role);
+// 7. Send welcome + verification email (NOW includes verifyLink)
+sendWelcomeEmail({
+  to: user.email,
+  pseudonym: user.pseudonym,
+  verifyToken,
+  verifyLink, // ✅ IMPORTANT FIX
+  sixDigitCode: verifyCode,
+}).catch((err) =>
+  console.error("Welcome email failed (non-fatal):", err)
+);
+
+// 8. Issue JWT
+const token = generateToken(user._id, user.role);
 
     return res.status(201).json({
       message: "Account created! Check your email to verify your address.",
