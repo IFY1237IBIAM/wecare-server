@@ -73,7 +73,10 @@ exports.getFeed = async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 15;
     const lastId = req.query.lastId;
-    const query = {};
+
+    const query = {
+      author: { $ne: req.user._id }, // ← hide own posts
+    };
     if (lastId) query._id = { $lt: lastId };
 
     const posts = await Post.find(query)
@@ -92,7 +95,7 @@ exports.getFeed = async (req, res) => {
         reactions,
         reactionCounts,
         totalReactions: reactions.length,
-        authorId: obj.author?.toString(), // ← expose authorId for client-side block check
+        authorId: obj.author?.toString(),
       };
     });
 
