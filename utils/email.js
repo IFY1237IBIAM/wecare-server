@@ -2,8 +2,6 @@ const { Resend } = require("resend");
 const dns = require("dns").promises;
 const crypto = require("crypto");
 
-// Lazy getter — Resend is only instantiated when an email function is actually
-// called, so process.env.RESEND_API_KEY is guaranteed to be loaded by then.
 let _resend = null;
 const getResend = () => {
   if (!_resend) {
@@ -17,8 +15,6 @@ const getResend = () => {
 
 const FROM = "HushCircle <noreply@hushcircle.org>";
 const REPLY_TO = "support@hushcircle.org";
-// APP_URL read lazily inside functions so .env is loaded first
-const getAppUrl = () => process.env.APP_URL || "https://hushcircle.org";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -30,10 +26,6 @@ function generateSecureToken() {
   return crypto.randomBytes(32).toString("hex");
 }
 
-/**
- * Validates email format and checks MX records.
- * Returns { valid: true } or { valid: false, message: string }
- */
 async function validateEmailDeliverable(email) {
   const emailRegex = /^\S+@\S+\.\S+$/;
   if (!emailRegex.test(email)) {
@@ -141,13 +133,14 @@ function codeBlock(code) {
 
 // ─── 1. Welcome + Email Verification ────────────────────────────────────────
 
-async function sendWelcomeEmail({ to, pseudonym, verifyToken, sixDigitCode }) {
+async function sendWelcomeEmail({ to, pseudonym, verifyToken, verifyLink, sixDigitCode }) {
   if (process.env.NODE_ENV === "development") {
     console.log(`[DEV] Welcome email skipped for ${to} | code: ${sixDigitCode} | token: ${verifyToken}`);
     return { skipped: true };
   }
 
-  const verifyUrl = `hushcircle://verify-email?token=${verifyToken}`;
+  // Use verifyLink if passed, otherwise fall back to building it
+  const url = verifyLink || `hushcircle://verify-email?token=${verifyToken}`;
 
   const bodyHtml = `
     <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#EDE8F5;">
@@ -162,7 +155,7 @@ async function sendWelcomeEmail({ to, pseudonym, verifyToken, sixDigitCode }) {
       and ensures you can recover it if you ever need to.
     </p>
 
-    ${ctaButton(verifyUrl, "Verify My Email")}
+    ${ctaButton(url, "Verify My Email")}
 
     <p style="margin:0 0 6px;font-size:13px;color:#8B7FA8;text-align:center;">
       Or enter this code manually in the app:
