@@ -1,7 +1,6 @@
 const express = require("express");
 const crypto = require("crypto");
 const User = require("../models/User");
-
 const {
   validateEmailDeliverable,
   generateSixDigitCode,
@@ -109,6 +108,7 @@ router.post("/forgot-password", async (req, res) => {
 
     const user = await User.findOne({ email: email.toLowerCase().trim() });
 
+    // Always return 200 to avoid user enumeration
     if (!user) {
       return res.status(200).json({
         message: "If that email is registered, you'll receive a reset code shortly.",
@@ -163,7 +163,7 @@ router.post("/reset-password", async (req, res) => {
       return res.status(400).json({ message: "Invalid or expired reset code." });
     }
 
-    user.password = newPassword;
+    user.password = newPassword; // pre-save hook hashes it
     user.passwordResetCode = undefined;
     user.passwordResetExpiry = undefined;
     await user.save();
