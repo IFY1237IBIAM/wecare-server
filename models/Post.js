@@ -65,9 +65,16 @@ const postSchema = new mongoose.Schema(
         message: "Maximum 5 hashtags per post",
       },
     },
+
+    // Add this:
+    group: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Group",
+      default: null
+    },
   },
   { timestamps: true }
-);
+);;
 
 postSchema.index({ createdAt: -1 });
 postSchema.index({ hashtags: 1 });
