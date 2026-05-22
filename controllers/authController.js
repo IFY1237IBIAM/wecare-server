@@ -128,6 +128,7 @@ exports.login = async (req, res) => {
         violations: user.violations || [],
         appealStatus: user.appealStatus || "none",
         showOnlineStatus: user.showOnlineStatus,
+        bio: user.bio || "",   // ← add this line
       },
     });
   } catch (error) {
@@ -284,9 +285,13 @@ exports.getUserByPseudonym = async (req, res) => {
 exports.refreshUser = async (req, res) => {
   try {
     const user = await User.findById(req.user._id)
-      .select("+showOnlineStatus +isOnline +lastSeen +role +appealStatus +isBanned +confirmedViolations +violations");
+      .select(
+        "+showOnlineStatus +isOnline +lastSeen +role +appealStatus +isBanned +confirmedViolations +violations +bio"
+      );
 
-    if (!user) return res.status(404).json({ message: "User not found" });
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
 
     return res.json({
       user: {
@@ -302,13 +307,13 @@ exports.refreshUser = async (req, res) => {
         showOnlineStatus: user.showOnlineStatus,
         isOnline: user.isOnline,
         lastSeen: user.lastSeen,
+        bio: user.bio || "", // ✅ FIX
       },
     });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
 };
-
 exports.clearReinstatedStatus = async (req, res) => {
   try {
     await User.findByIdAndUpdate(req.user._id, { appealStatus: "none" });
