@@ -69,33 +69,41 @@ exports.createPost = async (req, res) => {
 };
 
 // @route GET /api/posts
+// @route GET /api/posts
 exports.getFeed = async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 15;
     const lastId = req.query.lastId;
+    const userId = req.user._id.toString();
 
     const query = {
-      author: { $ne: req.user._id }, // ← hide own posts
+      author: { $ne: req.user._id }, // hide own posts
     };
     if (lastId) query._id = { $lt: lastId };
 
     const posts = await Post.find(query)
-      .sort({ createdAt: -1 })
-      .limit(limit);
+    .sort({ createdAt: -1 })
+    .limit(limit);
 
     const postsWithReactions = posts.map((post) => {
       const obj = post.toObject();
-      const reactions = Array.isArray(obj.reactions) ? obj.reactions : [];
+      const reactions = Array.isArray(obj.reactions)? obj.reactions : [];
+
       const reactionCounts = {};
       reactions.forEach((r) => {
         if (r.type) reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1;
       });
+
+      const userReactionObj = reactions.find(r => r.user && r.user.toString() === userId);
+
       return {
-        ...obj,
+      ...obj,
         reactions,
         reactionCounts,
         totalReactions: reactions.length,
         authorId: obj.author?.toString(),
+        userReaction: userReactionObj?.type || null,
+        hasReacted:!!userReactionObj,
       };
     });
 
@@ -107,15 +115,16 @@ exports.getFeed = async (req, res) => {
 
 
 // NEW: @route GET /api/posts/hashtag/:tag
+// NEW: @route GET /api/posts/hashtag/:tag
 exports.getPostsByHashtag = async (req, res) => {
   try {
     let tag = req.params.tag.toLowerCase();
-
-    // Normalize — add # if missing
     if (!tag.startsWith("#")) tag = `#${tag}`;
 
     const limit = parseInt(req.query.limit) || 15;
     const lastId = req.query.lastId;
+    const userId = req.user._id.toString(); // <-- add this
+
     const query = { hashtags: tag };
     if (lastId) query._id = { $lt: lastId };
 
@@ -127,11 +136,23 @@ exports.getPostsByHashtag = async (req, res) => {
     const postsWithReactions = posts.map((post) => {
       const obj = post.toObject();
       const reactions = Array.isArray(obj.reactions)? obj.reactions : [];
+      
       const reactionCounts = {};
       reactions.forEach((r) => {
         if (r.type) reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1;
       });
-      return {...obj, reactions, reactionCounts, totalReactions: reactions.length };
+
+      const userReactionObj = reactions.find(r => r.user && r.user.toString() === userId); // <-- add this
+
+      return {
+        ...obj, 
+        reactions, 
+        reactionCounts, 
+        totalReactions: reactions.length,
+        authorId: obj.author?.toString(),
+        userReaction: userReactionObj?.type || null, // <-- add this
+        hasReacted:!!userReactionObj, // <-- add this
+      };
     });
 
     return res.json({
@@ -501,6 +522,7 @@ exports.savePost = async (req, res) => {
 exports.searchPosts = async (req, res) => {
   try {
     const { q, mood, author } = req.query;
+    const userId = req.user._id.toString(); // <-- add this
 
     if (!q || q.trim().length < 2) {
       return res.status(400).json({ message: "Search query must be at least 2 characters" });
@@ -514,12 +536,10 @@ exports.searchPosts = async (req, res) => {
       ],
     };
 
-    // Optional mood filter
     if (mood && mood !== "all") {
       query.mood = mood;
     }
 
-    // Optional author filter — for profile screens
     if (author) {
       query.pseudonym = { $regex: `^${author.trim()}$`, $options: "i" };
       delete query.$or;
@@ -533,16 +553,22 @@ exports.searchPosts = async (req, res) => {
     const postsWithReactions = posts.map((post) => {
       const obj = post.toObject();
       const reactions = Array.isArray(obj.reactions) ? obj.reactions : [];
+      
       const reactionCounts = {};
       reactions.forEach((r) => {
         if (r.type) reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1;
       });
+
+      const userReactionObj = reactions.find(r => r.user && r.user.toString() === userId); // <-- add this
+
       return {
         ...obj,
         reactions,
         reactionCounts,
         totalReactions: reactions.length,
         authorId: obj.author?.toString(),
+        userReaction: userReactionObj?.type || null, // <-- add this
+        hasReacted:!!userReactionObj, // <-- add this
       };
     });
 
