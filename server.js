@@ -7,6 +7,8 @@ const cors = require("cors");
 const rateLimit = require("express-rate-limit");
 const { runCleanup } = require("./utils/cleanupJob");
 const connectDB = require("./config/db");
+const jwt = require("jsonwebtoken");
+const User = require("./models/User");
 const emailRoutes = require("./routes/emailRoutes");
 
 dotenv.config();
@@ -38,64 +40,62 @@ app.use(helmet());
 app.use(cors());
 app.use(express.json());
 
+// ── Socket.IO auth middleware ──
+io.use(async (socket, next) => {
+  try {
+    const token = socket.handshake.auth.token;
+    if (!token) return next(new Error("No token"));
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    socket.userId = decoded.id; // attach userId to socket
+    next();
+  } catch (err) {
+    next(new Error("Auth error"));
+  }
+});
+
 // ── Socket.IO connection handling ──
 io.on("connection", (socket) => {
-  console.log(`🔌 Socket connected: ${socket.id}`);
+  console.log(`🔌 Socket connected: ${socket.id} user:${socket.userId}`);
 
   socket.on("join_post", (postId) => {
     if (!postId) return;
     socket.join(`post:${postId}`);
-    console.log(`📌 ${socket.id} joined post:${postId}`);
   });
 
   socket.on("leave_post", (postId) => {
     if (!postId) return;
     socket.leave(`post:${postId}`);
-    console.log(`📤 ${socket.id} left post:${postId}`);
   });
 
   socket.on("join_group", (groupId) => {
     if (!groupId) return;
     socket.join(`group:${groupId}`);
-    console.log(`👥 ${socket.id} joined group:${groupId}`);
   });
 
   socket.on("leave_group", (groupId) => {
     if (!groupId) return;
     socket.leave(`group:${groupId}`);
-    console.log(`📤 ${socket.id} left group:${groupId}`);
   });
 
-   // ── Typing indicators for groups ──
   socket.on("typing", ({ groupId, userId, pseudonym }) => {
-    if (!groupId || !userId || !pseudonym) return;
-    socket.to(`group:${groupId}`).emit("user_typing", {
-      groupId,
-      userId,
-      pseudonym,
-    });
+    if (!groupId ||!userId ||!pseudonym) return;
+    socket.to(`group:${groupId}`).emit("user_typing", { groupId, userId, pseudonym });
   });
 
   socket.on("stop_typing", ({ groupId, userId, pseudonym }) => {
-    if (!groupId || !userId) return;
-    socket.to(`group:${groupId}`).emit("user_stop_typing", {
-      groupId,
-      userId,
-      pseudonym,
-    });
+    if (!groupId ||!userId) return;
+    socket.to(`group:${groupId}`).emit("user_stop_typing", { groupId, userId, pseudonym });
   });
 
   socket.on("identify", (userId) => {
     if (!userId) return;
     socket.join(`user:${userId}`);
-    console.log(`👤 User ${userId} identified`);
   });
 
   socket.on("disconnect", (reason) => {
-    console.log(`🔌 Socket disconnected: ${socket.id} — ${reason}`);
+    console.log(`🔌 Socket disconnected: ${socket.id}`);
   });
 });
-
 // Make io accessible outside this file
 module.exports.io = io;
 

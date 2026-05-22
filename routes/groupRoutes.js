@@ -177,11 +177,9 @@ router.post("/:groupId/posts", protect, requireMember, async (req, res) => {
       });
     }
 
-    // Extract mentions
     const mentionedNames = extractMentions(content);
     const group = req.group;
 
-    // Build post
     const post = await GroupPost.create({
       group: req.params.groupId,
       author: req.user._id,
@@ -191,7 +189,7 @@ router.post("/:groupId/posts", protect, requireMember, async (req, res) => {
       replyTo: replyTo || null,
     });
 
-    // Socket emit — real-time to all in room
+    // Socket emit
     if (req.io) {
       req.io.to(`group:${req.params.groupId}`).emit("group_post_added", {
         groupId: req.params.groupId,
@@ -199,22 +197,32 @@ router.post("/:groupId/posts", protect, requireMember, async (req, res) => {
       });
     }
 
-    // ── Notifications ──────────────────────────────────────────────────────
+    // Get online users in this room
+    const room = req.io?.sockets?.adapter?.rooms?.get(`group:${req.params.groupId}`);
+    const onlineUserIds = new Set();
+    if (room) {
+      for (const sid of room) {
+        const s = req.io.sockets.sockets.get(sid);
+        if (s?.userId) onlineUserIds.add(s.userId);
+      }
+    }
 
-    // 1. Reply notification
+    // 1. Reply notification - skip if online
+    let originalPost = null;
     if (replyTo) {
       try {
-        const originalPost = await GroupPost.findById(replyTo);
+        originalPost = await GroupPost.findById(replyTo);
         if (
           originalPost &&
-          originalPost.author.toString() !== req.user._id.toString()
+          originalPost.author.toString()!== req.user._id.toString() &&
+         !onlineUserIds.has(originalPost.author.toString())
         ) {
           const canPush = await getPushEnabled(originalPost.author, "replies");
           if (canPush) {
             await sendPushNotification(originalPost.author, {
               title: `${req.user.pseudonym} replied to you`,
               body: content.substring(0, 80),
-              data: { screen: "GroupChat", groupId: req.params.groupId },
+              data: { screen: "GroupChat", groupId: req.params.groupId, postId: post._id },
             });
           }
           await Notification.create({
@@ -233,7 +241,7 @@ router.post("/:groupId/posts", protect, requireMember, async (req, res) => {
       }
     }
 
-    // 2. @mention notifications (skip post author, skip replyTo target already notified)
+    // 2. @mention notifications - skip if online
     if (mentionedNames.length > 0) {
       try {
         const groupMembers = await Group.findById(req.params.groupId).populate(
@@ -241,35 +249,30 @@ router.post("/:groupId/posts", protect, requireMember, async (req, res) => {
           "pseudonym _id"
         );
         for (const member of groupMembers.members) {
-          if (member._id.toString() === req.user._id.toString()) continue;
+          const memberIdStr = member._id.toString();
+          if (memberIdStr === req.user._id.toString()) continue;
+          if (onlineUserIds.has(memberIdStr)) continue;
 
           const isTagged =
             mentionedNames.includes(member.pseudonym.toLowerCase()) ||
             mentionedNames.includes("all");
 
           if (!isTagged) continue;
-
-          // Don't double-notify reply target
-          if (
-            replyTo &&
-            (await GroupPost.findById(replyTo))?.author.toString() ===
-              member._id.toString()
-          )
-            continue;
+          if (replyTo && originalPost?.author.toString() === memberIdStr) continue;
 
           const canPush = await getPushEnabled(member._id, "mentions");
           if (canPush) {
             await sendPushNotification(member._id, {
               title: `${req.user.pseudonym} mentioned you in ${group.name}`,
               body: content.substring(0, 80),
-              data: { screen: "GroupChat", groupId: req.params.groupId },
+              data: { screen: "GroupChat", groupId: req.params.groupId, postId: post._id },
             });
           }
           await Notification.create({
             recipient: member._id,
             sender: req.user._id,
             senderPseudonym: req.user.pseudonym,
-            type: "comment",
+            type: "mention", // changed from "comment"
             post: post._id,
             postPreview: content.substring(0, 60),
             commentText: `Mentioned you in ${group.name}`,
@@ -281,12 +284,12 @@ router.post("/:groupId/posts", protect, requireMember, async (req, res) => {
       }
     }
 
-    // 3. General group post notification (if no reply/mention)
+    // 3. General group post notification - skip if online
     if (!replyTo && mentionedNames.length === 0) {
       try {
         const otherMembers = group.members
-          .filter((m) => m.toString() !== req.user._id.toString())
-          .slice(0, 10);
+         .filter((m) => m.toString()!== req.user._id.toString() &&!onlineUserIds.has(m.toString()))
+         .slice(0, 10);
 
         for (const memberId of otherMembers) {
           const canPush = await getPushEnabled(memberId, "groupPosts");
@@ -294,7 +297,7 @@ router.post("/:groupId/posts", protect, requireMember, async (req, res) => {
             await sendPushNotification(memberId, {
               title: `${req.user.pseudonym} posted in ${group.name}`,
               body: content.substring(0, 80),
-              data: { screen: "GroupChat", groupId: req.params.groupId },
+              data: { screen: "GroupChat", groupId: req.params.groupId, postId: post._id },
             });
           }
         }
@@ -309,7 +312,7 @@ router.post("/:groupId/posts", protect, requireMember, async (req, res) => {
         "We noticed your message may express thoughts of self-harm. You are not alone 💜";
     }
 
-    return res.status(201).json({ message: "Message sent 💜", post, ...crisisRes });
+    return res.status(201).json({ message: "Message sent 💜", post,...crisisRes });
   } catch (e) {
     return res.status(500).json({ message: e.message });
   }
