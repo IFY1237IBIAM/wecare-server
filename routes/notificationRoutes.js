@@ -152,20 +152,7 @@ router.delete("/:id", protect, async (req, res) => {
   }
 });
 
-// DELETE /api/notifications/:id
-router.delete("/:id", protect, async (req, res) => {
-  try {
-    const Notification = require("../models/Notification");
-    const notif = await Notification.findOneAndDelete({
-      _id: req.params.id,
-      recipient: req.user._id,  // only own notifications
-    });
-    if (!notif) return res.status(404).json({ message: "Notification not found" });
-    return res.json({ message: "Notification deleted" });
-  } catch (error) {
-    return res.status(500).json({ message: error.message });
-  }
-});
+
 
 // DELETE /api/notifications — delete ALL
 router.delete("/", protect, async (req, res) => {
