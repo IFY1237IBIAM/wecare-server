@@ -4,23 +4,21 @@ const { protect } = require("../middleware/authMiddleware");
 const Group = require("../models/Group");
 const GroupPost = require("../models/GroupPost");
 const User = require("../models/User");
+const UserSettings = require("../models/UserSettings");
 const { analyzeContent } = require("../middleware/contentModerator");
 const { sendPushNotification } = require("../utils/sendPush");
 const Notification = require("../models/Notification");
 
-// Middleware — check member and not banned
+// ── Membership middleware ──────────────────────────────────────────────────
 const requireMember = async (req, res, next) => {
   try {
-    if (req.user.isBanned) {
-      return res.status(403).json({ message: "Your account is restricted" });
-    }
-
     const group = await Group.findById(req.params.groupId);
     if (!group) return res.status(404).json({ message: "Group not found" });
-    
-    const isMember = group.members.some((m) => m.toString() === req.user._id.toString());
-    if (!isMember) return res.status(403).json({ message: "You are not a member of this group" });
-    
+    const isMember = group.members.some(
+      (m) => m.toString() === req.user._id.toString()
+    );
+    if (!isMember)
+      return res.status(403).json({ message: "You are not a member of this group" });
     req.group = group;
     next();
   } catch (e) {
@@ -28,7 +26,25 @@ const requireMember = async (req, res, next) => {
   }
 };
 
-// GET /api/groups — list all groups with membership status
+// ── Helper: extract @mentions from text ───────────────────────────────────
+// Returns array of pseudonyms mentioned (without @)
+function extractMentions(text) {
+  const matches = text.match(/@(\w+)/g) || [];
+  return [...new Set(matches.map((m) => m.slice(1).toLowerCase()))];
+}
+
+// ── Helper: check user push setting ───────────────────────────────────────
+async function getPushEnabled(userId, type) {
+  try {
+    const settings = await UserSettings.findOne({ user: userId });
+    if (!settings) return true; // default on
+    return settings.pushNotifications?.[type] !== false;
+  } catch {
+    return true;
+  }
+}
+
+// GET /api/groups — list all groups with membership
 router.get("/", protect, async (req, res) => {
   try {
     const groups = await Group.find().sort({ createdAt: -1 });
@@ -49,16 +65,12 @@ router.get("/", protect, async (req, res) => {
   }
 });
 
-// POST /api/groups — create a group
+// POST /api/groups — create group
 router.post("/", protect, async (req, res) => {
   try {
-    if (req.user.isBanned) {
-      return res.status(403).json({ message: "Your account is restricted" });
-    }
-
     const { name, topic, description, icon } = req.body;
-    if (!name || !topic) return res.status(400).json({ message: "Name and topic are required" });
-    if (name.length > 50) return res.status(400).json({ message: "Group name too long" });
+    if (!name || !topic)
+      return res.status(400).json({ message: "Name and topic are required" });
 
     const group = await Group.create({
       name,
@@ -69,7 +81,6 @@ router.post("/", protect, async (req, res) => {
       creatorPseudonym: req.user.pseudonym,
       members: [req.user._id],
     });
-
     return res.status(201).json({ message: "Group created 💜", group });
   } catch (e) {
     return res.status(500).json({ message: e.message });
@@ -79,39 +90,24 @@ router.post("/", protect, async (req, res) => {
 // POST /api/groups/join/:groupId
 router.post("/join/:groupId", protect, async (req, res) => {
   try {
-    if (req.user.isBanned) {
-      return res.status(403).json({ message: "Your account is restricted" });
-    }
-
-    const group = await Group.findOneAndUpdate(
-      { 
-        _id: req.params.groupId, 
-        $expr: { $lt: [{ $size: "$members" }, 50] },
-        members: { $ne: req.user._id }
-      },
-      { $push: { members: req.user._id } },
-      { new: true }
-    );
-
-    if (!group) {
-      const checkGroup = await Group.findById(req.params.groupId);
-      if (!checkGroup) return res.status(404).json({ message: "Group not found" });
-      if (checkGroup.members.some(m => m.toString() === req.user._id.toString())) {
-        return res.status(400).json({ message: "Already a member" });
-      }
+    const group = await Group.findById(req.params.groupId);
+    if (!group) return res.status(404).json({ message: "Group not found" });
+    if (group.members.length >= 50)
       return res.status(400).json({ message: "This group is full (50 members)" });
-    }
 
-    // Notify group creator
-    if (group.creator.toString() !== req.user._id.toString()) {
-      sendPushNotification(group.creator, {
-        title: `${req.user.pseudonym} joined ${group.name}`,
-        body: `Your group now has ${group.members.length} members 💜`,
-        data: { screen: "Groups", groupId: group._id.toString() },
-      }).catch(err => console.log("Push error:", err.message));
-    }
+    const alreadyMember = group.members.some(
+      (m) => m.toString() === req.user._id.toString()
+    );
+    if (alreadyMember)
+      return res.status(400).json({ message: "Already a member" });
 
-    return res.json({ message: `Joined ${group.name} 💜`, memberCount: group.members.length });
+    group.members.push(req.user._id);
+    await group.save();
+
+    return res.json({
+      message: `Joined ${group.name} 💜`,
+      memberCount: group.members.length,
+    });
   } catch (e) {
     return res.status(500).json({ message: e.message });
   }
@@ -120,32 +116,46 @@ router.post("/join/:groupId", protect, async (req, res) => {
 // POST /api/groups/leave/:groupId
 router.post("/leave/:groupId", protect, async (req, res) => {
   try {
-    const group = await Group.findByIdAndUpdate(
-      req.params.groupId,
-      { $pull: { members: req.user._id } },
-      { new: true }
-    );
-    
+    const group = await Group.findById(req.params.groupId);
     if (!group) return res.status(404).json({ message: "Group not found" });
-
+    group.members = group.members.filter(
+      (m) => m.toString() !== req.user._id.toString()
+    );
+    await group.save();
     return res.json({ message: `Left ${group.name}`, memberCount: group.members.length });
   } catch (e) {
     return res.status(500).json({ message: e.message });
   }
 });
 
-// GET /api/groups/:groupId/posts — members only
+// GET /api/groups/:groupId/members — for mention autocomplete
+router.get("/:groupId/members", protect, requireMember, async (req, res) => {
+  try {
+    const group = await Group.findById(req.params.groupId).populate(
+      "members",
+      "pseudonym"
+    );
+    const members = group.members.map((m) => ({
+      _id: m._id,
+      pseudonym: m.pseudonym,
+    }));
+    return res.json({ members });
+  } catch (e) {
+    return res.status(500).json({ message: e.message });
+  }
+});
+
+// GET /api/groups/:groupId/posts
 router.get("/:groupId/posts", protect, requireMember, async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 20;
+    const limit = parseInt(req.query.limit) || 30;
     const lastId = req.query.lastId;
     const query = { group: req.params.groupId };
     if (lastId) query._id = { $lt: lastId };
 
     const posts = await GroupPost.find(query)
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .select("-author"); // hide author ID, keep pseudonym
+      .sort({ createdAt: 1 }) // oldest first — chat style
+      .limit(limit);
 
     return res.json({ posts });
   } catch (e) {
@@ -153,35 +163,35 @@ router.get("/:groupId/posts", protect, requireMember, async (req, res) => {
   }
 });
 
-// POST /api/groups/:groupId/posts — members only
+// POST /api/groups/:groupId/posts
 router.post("/:groupId/posts", protect, requireMember, async (req, res) => {
   try {
-    const { content, mood } = req.body;
-    
-    if (!content || !content.trim()) {
-      return res.status(400).json({ message: "Content is required" });
-    }
-    if (content.length > 500) {
-      return res.status(400).json({ message: "Max 500 characters" });
-    }
+    const { content, mood, replyTo } = req.body;
+    if (!content) return res.status(400).json({ message: "Content is required" });
 
     const mod = await analyzeContent(content);
     if (mod.autoReject) {
       return res.status(400).json({
-        message: "Your post contains content that violates our community guidelines.",
+        message: "Your message violates our community guidelines.",
         flagType: mod.flags[0]?.type,
       });
     }
 
+    // Extract mentions
+    const mentionedNames = extractMentions(content);
+    const group = req.group;
+
+    // Build post
     const post = await GroupPost.create({
       group: req.params.groupId,
       author: req.user._id,
       pseudonym: req.user.pseudonym,
-      content: content.trim(),
+      content,
       mood: mood || "hope",
+      replyTo: replyTo || null,
     });
 
-    // Emit socket event for real-time updates
+    // Socket emit — real-time to all in room
     if (req.io) {
       req.io.to(`group:${req.params.groupId}`).emit("group_post_added", {
         groupId: req.params.groupId,
@@ -189,135 +199,117 @@ router.post("/:groupId/posts", protect, requireMember, async (req, res) => {
       });
     }
 
-    // Notify group members, don't await to avoid timeout
-    const group = req.group;
-    const otherMembers = group.members
-      .filter((m) => m.toString() !== req.user._id.toString())
-      .slice(0, 15); // limit to 15 to avoid spam
+    // ── Notifications ──────────────────────────────────────────────────────
 
-    const pushPromises = otherMembers.map(memberId =>
-      sendPushNotification(memberId, {
-        title: `${req.user.pseudonym} posted in ${group.name}`,
-        body: content.substring(0, 80),
-        data: {
-          screen: "GroupChat",
-          groupId: group._id.toString(),
-          postId: post._id.toString(),
-        },
-      }).catch(err => console.log("Push error:", err.message))
-    );
-    
-    Promise.allSettled(pushPromises);
+    // 1. Reply notification
+    if (replyTo) {
+      try {
+        const originalPost = await GroupPost.findById(replyTo);
+        if (
+          originalPost &&
+          originalPost.author.toString() !== req.user._id.toString()
+        ) {
+          const canPush = await getPushEnabled(originalPost.author, "replies");
+          if (canPush) {
+            await sendPushNotification(originalPost.author, {
+              title: `${req.user.pseudonym} replied to you`,
+              body: content.substring(0, 80),
+              data: { screen: "GroupChat", groupId: req.params.groupId },
+            });
+          }
+          await Notification.create({
+            recipient: originalPost.author,
+            sender: req.user._id,
+            senderPseudonym: req.user.pseudonym,
+            type: "reply",
+            post: post._id,
+            postPreview: originalPost.content?.substring(0, 60),
+            commentText: content.substring(0, 100),
+            read: false,
+          });
+        }
+      } catch (e) {
+        console.log("Reply notif error:", e.message);
+      }
+    }
 
-    const modRes = { crisisDetected: mod.crisisDetected };
+    // 2. @mention notifications (skip post author, skip replyTo target already notified)
+    if (mentionedNames.length > 0) {
+      try {
+        const groupMembers = await Group.findById(req.params.groupId).populate(
+          "members",
+          "pseudonym _id"
+        );
+        for (const member of groupMembers.members) {
+          if (member._id.toString() === req.user._id.toString()) continue;
+
+          const isTagged =
+            mentionedNames.includes(member.pseudonym.toLowerCase()) ||
+            mentionedNames.includes("all");
+
+          if (!isTagged) continue;
+
+          // Don't double-notify reply target
+          if (
+            replyTo &&
+            (await GroupPost.findById(replyTo))?.author.toString() ===
+              member._id.toString()
+          )
+            continue;
+
+          const canPush = await getPushEnabled(member._id, "mentions");
+          if (canPush) {
+            await sendPushNotification(member._id, {
+              title: `${req.user.pseudonym} mentioned you in ${group.name}`,
+              body: content.substring(0, 80),
+              data: { screen: "GroupChat", groupId: req.params.groupId },
+            });
+          }
+          await Notification.create({
+            recipient: member._id,
+            sender: req.user._id,
+            senderPseudonym: req.user.pseudonym,
+            type: "comment",
+            post: post._id,
+            postPreview: content.substring(0, 60),
+            commentText: `Mentioned you in ${group.name}`,
+            read: false,
+          });
+        }
+      } catch (e) {
+        console.log("Mention notif error:", e.message);
+      }
+    }
+
+    // 3. General group post notification (if no reply/mention)
+    if (!replyTo && mentionedNames.length === 0) {
+      try {
+        const otherMembers = group.members
+          .filter((m) => m.toString() !== req.user._id.toString())
+          .slice(0, 10);
+
+        for (const memberId of otherMembers) {
+          const canPush = await getPushEnabled(memberId, "groupPosts");
+          if (canPush) {
+            await sendPushNotification(memberId, {
+              title: `${req.user.pseudonym} posted in ${group.name}`,
+              body: content.substring(0, 80),
+              data: { screen: "GroupChat", groupId: req.params.groupId },
+            });
+          }
+        }
+      } catch (e) {
+        console.log("Group post notif error:", e.message);
+      }
+    }
+
+    const crisisRes = { crisisDetected: mod.crisisDetected };
     if (mod.crisisDetected) {
-      modRes.crisisMessage = "We noticed your post may be expressing thoughts of self-harm. You are not alone 💜";
-      modRes.crisisResources = [
-        { name: "Befrienders Worldwide", url: "https://www.befrienders.org" },
-        { name: "Crisis Text Line", info: "Text HOME to 741" },
-      ];
+      crisisRes.crisisMessage =
+        "We noticed your message may express thoughts of self-harm. You are not alone 💜";
     }
 
-    return res.status(201).json({ message: "Post shared 💜", post, ...modRes });
-  } catch (e) {
-    return res.status(500).json({ message: e.message });
-  }
-});
-
-// POST /api/groups/:groupId/posts/:postId/comments
-router.post("/:groupId/posts/:postId/comments", protect, requireMember, async (req, res) => {
-  try {
-    const { text } = req.body;
-    if (!text || !text.trim()) return res.status(400).json({ message: "Comment text required" });
-    if (text.length > 300) return res.status(400).json({ message: "Max 300 characters" });
-
-    const mod = await analyzeContent(text);
-    if (mod.autoReject) return res.status(400).json({ message: "Comment violates community guidelines." });
-
-    const post = await GroupPost.findById(req.params.postId);
-    if (!post) return res.status(404).json({ message: "Post not found" });
-
-    const isPostAuthor = post.author.toString() === req.user._id.toString();
-    post.comments.push({
-      author: req.user._id,
-      pseudonym: req.user.pseudonym,
-      text: text.trim(),
-      isPostAuthor,
-    });
-    await post.save({ validateBeforeSave: false });
-
-    const newComment = post.comments[post.comments.length - 1];
-
-    // Emit socket event for real-time updates
-    if (req.io) {
-      req.io.to(`group:${req.params.groupId}`).emit("group_comment_added", {
-        groupId: req.params.groupId,
-        postId: req.params.postId,
-        comment: newComment.toObject(),
-      });
-    }
-
-    // Notify post author
-    if (post.author.toString() !== req.user._id.toString()) {
-      sendPushNotification(post.author, {
-        title: `${req.user.pseudonym} commented in ${req.group.name}`,
-        body: text.substring(0, 80),
-        data: {
-          screen: "GroupChat",
-          groupId: req.params.groupId,
-          postId: req.params.postId,
-        },
-      }).catch(err => console.log("Push error:", err.message));
-
-      await Notification.create({
-        recipient: post.author,
-        sender: req.user._id,
-        senderPseudonym: req.user.pseudonym,
-        type: "comment",
-        post: post._id,
-        postPreview: post.content?.substring(0, 60),
-        commentText: text.substring(0, 100),
-        read: false,
-      });
-    }
-
-    return res.status(201).json({ message: "Comment added 💜", comment: newComment });
-  } catch (e) {
-    return res.status(500).json({ message: e.message });
-  }
-});
-
-// POST /api/groups/:groupId/posts/:postId/react
-router.post("/:groupId/posts/:postId/react", protect, requireMember, async (req, res) => {
-  try {
-    const { type } = req.body; // care, heart, hug, strong, cry, hope
-    const post = await GroupPost.findById(req.params.postId);
-    if (!post) return res.status(404).json({ message: "Post not found" });
-
-    // Remove existing reaction from user
-    post.reactions = post.reactions.filter(r => !r.user.equals(req.user._id));
-    
-    // Add new reaction if type provided
-    if (type) {
-      post.reactions.push({ user: req.user._id, type });
-    }
-    
-    await post.save();
-
-    // Notify post author
-    if (!post.author.equals(req.user._id) && type) {
-      sendPushNotification(post.author, {
-        title: `${req.user.pseudonym} reacted to your post`,
-        body: type,
-        data: {
-          screen: "GroupChat",
-          groupId: req.params.groupId,
-          postId: post._id.toString(),
-        },
-      }).catch(err => console.log("Push error:", err.message));
-    }
-
-    return res.json({ reactions: post.reactions });
+    return res.status(201).json({ message: "Message sent 💜", post, ...crisisRes });
   } catch (e) {
     return res.status(500).json({ message: e.message });
   }

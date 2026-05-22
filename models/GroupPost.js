@@ -17,17 +17,27 @@ const groupPostSchema = new mongoose.Schema(
     author: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     pseudonym: { type: String, required: true },
     content: { type: String, required: true, trim: true, maxlength: 500 },
+
     mood: {
       type: String,
       enum: ["heartbreak", "fear", "sadness", "struggle", "hope", "joy", "calm"],
       default: "hope",
     },
+
     reactions: [
       {
         user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
         type: { type: String, enum: ["care", "heart", "hug", "strong", "cry", "hope"] },
       },
     ],
+
+    // ✅ ADD THIS (reply system)
+    replyTo: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "GroupPost",
+      default: null,
+    },
+
     comments: [commentSchema],
   },
   { timestamps: true }
