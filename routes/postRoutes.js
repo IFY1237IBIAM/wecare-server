@@ -7,6 +7,20 @@ router.get("/search", protect, postController.searchPosts);
 router.get("/hashtag/:tag", protect, postController.getPostsByHashtag); // ← add here
 router.get("/feed", protect, postController.getFeed);
 router.get("/", protect, postController.getFeed);
+router.get("/:id", protect, async (req, res) => {
+  try {
+    const Post = require("../models/Post");
+    const post = await Post.findById(req.params.id)
+      .populate("author", "pseudonym")
+      .lean();
+    
+    if (!post) return res.status(404).json({ message: "Post not found" });
+    
+    res.json({ post });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+});
 router.post("/", protect, postController.createPost);
 router.post("/:id/react", protect, postController.reactToPost);
 router.post("/:id/comments", protect, postController.addComment);
