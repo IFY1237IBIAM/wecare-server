@@ -46,6 +46,7 @@ router.get("/", protect, async (req, res) => {
     const notifications = await Notification.find({ recipient: req.user._id })
       .sort({ createdAt: -1 })
       .limit(limit)
+      .populate("post", "_id group") // add this
       .lean();
     
     return res.json({ notifications });
