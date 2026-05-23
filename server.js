@@ -10,6 +10,7 @@ const connectDB = require("./config/db");
 const jwt = require("jsonwebtoken");
 const User = require("./models/User");
 const emailRoutes = require("./routes/emailRoutes");
+const morgan = require("morgan");
 
 dotenv.config();
 connectDB();
@@ -39,7 +40,7 @@ app.set('trust proxy', 1);
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
-
+app.use(morgan("dev"));
 // ── Socket.IO auth middleware ──
 io.use(async (socket, next) => {
   try {
