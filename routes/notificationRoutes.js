@@ -167,6 +167,19 @@ router.delete("/", protect, async (req, res) => {
   }
 });
 
+
+router.put("/mark-all-read", protect, async (req, res) => {
+  try {
+    await Notification.updateMany(
+      { recipient: req.user._id, read: false },
+      { read: true }
+    );
+    return res.json({ message: "All marked as read" });
+  } catch (e) {
+    return res.status(500).json({ message: e.message });
+  }
+});
+
 module.exports = router;
 
 
