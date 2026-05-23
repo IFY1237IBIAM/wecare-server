@@ -8,7 +8,9 @@ const rateLimit = require("express-rate-limit");
 const { runCleanup } = require("./utils/cleanupJob");
 const connectDB = require("./config/db");
 const jwt = require("jsonwebtoken");
+const translateRoute = require("./routes/translate.js").default;
 const User = require("./models/User");
+
 const emailRoutes = require("./routes/emailRoutes");
 const morgan = require("morgan");
 
