@@ -151,6 +151,7 @@ router.get("/:groupId/posts", protect, requireMember, async (req, res) => {
     const limit = parseInt(req.query.limit) || 30;
     const lastId = req.query.lastId;
     const query = { group: req.params.groupId };
+    deleted: { $ne: true }  // add this
     if (lastId) query._id = { $lt: lastId };
 
     const posts = await GroupPost.find(query)
@@ -317,5 +318,26 @@ router.post("/:groupId/posts", protect, requireMember, async (req, res) => {
     return res.status(500).json({ message: e.message });
   }
 });
-
+// DELETE /api/groups/:groupId/posts/:postId — soft delete, author only
+router.delete("/:groupId/posts/:postId", protect, requireMember, async (req, res) => {
+  try {
+    const post = await GroupPost.findById(req.params.postId);
+    if (!post) return res.status(404).json({ message: "Post not found" });
+    if (post.author.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: "Not authorized" });
+    }
+    post.content = "This message was deleted.";
+    post.deleted = true;
+    await post.save({ validateBeforeSave: false });
+    if (req.io) {
+      req.io.to(`group:${req.params.groupId}`).emit("group_post_deleted", {
+        groupId: req.params.groupId,
+        postId: req.params.postId,
+      });
+    }
+    return res.json({ message: "Message deleted" });
+  } catch (e) {
+    return res.status(500).json({ message: e.message });
+  }
+});
 module.exports = router;

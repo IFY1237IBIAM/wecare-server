@@ -6,7 +6,11 @@ const commentSchema = new mongoose.Schema(
     pseudonym: { type: String, required: true },
     text: { type: String, required: true, trim: true, maxlength: 300 },
     isPostAuthor: { type: Boolean, default: false },
-    editedAt: { type: Date }
+    editedAt: { type: Date },
+
+    // ADD THESE FOR DELETE/COPY ACTIONS
+    deleted: { type: Boolean, default: false },
+    deletedAt: { type: Date },
   },
   { timestamps: true }
 );
@@ -31,7 +35,7 @@ const groupPostSchema = new mongoose.Schema(
       },
     ],
 
-    // ✅ ADD THIS (reply system)
+    // reply system
     replyTo: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "GroupPost",
@@ -39,6 +43,10 @@ const groupPostSchema = new mongoose.Schema(
     },
 
     comments: [commentSchema],
+
+    // ADD THESE FOR DELETE/COPY ACTIONS
+    deleted: { type: Boolean, default: false },
+    deletedAt: { type: Date },
   },
   { timestamps: true }
 );
