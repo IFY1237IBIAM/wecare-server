@@ -201,35 +201,45 @@ exports.reactToPost = async (req, res) => {
     await post.save({ validateBeforeSave: false });
 
     // Create notification for post author
-    try {
-      const freshPost = await Post.findById(req.params.id).select("author pseudonym content");
-      if (freshPost && freshPost.author.toString()!== req.user._id.toString()) {
-        await Notification.deleteOne({
+try {
+  const freshPost = await Post.findById(req.params.id).select("author pseudonym content");
+  if (freshPost && freshPost.author.toString() !== req.user._id.toString()) {
+    await Notification.deleteOne({
+      recipient: freshPost.author,
+      sender: req.user._id,
+      post: req.params.id,
+      type: "reaction",
+    });
+
+    if (existingIndex === -1 || post.reactions.find(r => r.user && r.user.toString() === userId)) {
+      const newReaction = post.reactions.find(r => r.user && r.user.toString() === userId);
+      if (newReaction) {
+        await Notification.create({
           recipient: freshPost.author,
           sender: req.user._id,
-          post: req.params.id,
+          senderPseudonym: req.user.pseudonym,
           type: "reaction",
+          post: req.params.id,
+          postPreview: freshPost.content?.substring(0, 60),
+          reactionType: newReaction.type,
         });
 
-        if (existingIndex === -1 || post.reactions.find(r => r.user && r.user.toString() === userId)) {
-          const newReaction = post.reactions.find(r => r.user && r.user.toString() === userId);
-          if (newReaction) {
-            await Notification.create({
-              recipient: freshPost.author,
-              sender: req.user._id,
-              senderPseudonym: req.user.pseudonym,
-              type: "reaction",
-              post: req.params.id,
-              postPreview: freshPost.content?.substring(0, 60),
-              reactionType: newReaction.type,
-            });
+        // ADD THIS:
+        await sendPushNotification(freshPost.author, {
+          title: `${req.user.pseudonym} reacted to your post`,
+          body: newReaction.type,
+          data: { 
+            screen: "Feed", 
+            postId: req.params.id.toString(),
+            type: "reaction"
           }
-        }
+        });
       }
-    } catch (e) {
-      console.log("Notification error:", e.message);
     }
-
+  }
+} catch (e) {
+  console.log("Notification error:", e.message);
+}
     const reactionCounts = {};
     post.reactions.forEach((r) => {
       if (r.type) reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1;
