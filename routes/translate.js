@@ -46,7 +46,7 @@ router.post("/translate", async (req, res) => {
       body: JSON.stringify({
         q: text,
         target: targetLang,
-        source: sourceLang || undefined,
+        ...(sourceLang && sourceLang !== "autodetect" ? { source: sourceLang } : {}),
         format: "text"
       })
     });
