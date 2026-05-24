@@ -70,40 +70,47 @@ exports.createPost = async (req, res) => {
 
 // @route GET /api/posts
 // @route GET /api/posts
+// @route GET /api/posts
 exports.getFeed = async (req, res) => {
   try {
+    const User = require("../models/User");
     const limit = parseInt(req.query.limit) || 15;
     const lastId = req.query.lastId;
-    const userId = req.user._id.toString();
+    const userId = req.user._id;
+
+    // Get user's saved posts once
+    const user = await User.findById(userId).select("savedPosts");
+    const savedSet = new Set(user.savedPosts.map(id => id.toString()));
 
     const query = {
-      author: { $ne: req.user._id }, // hide own posts
+      author: { $ne: userId }, // hide own posts
     };
     if (lastId) query._id = { $lt: lastId };
 
     const posts = await Post.find(query)
-    .sort({ createdAt: -1 })
-    .limit(limit);
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean(); // use lean so we can add fields easily
 
     const postsWithReactions = posts.map((post) => {
-      const obj = post.toObject();
-      const reactions = Array.isArray(obj.reactions)? obj.reactions : [];
+      const reactions = Array.isArray(post.reactions) ? post.reactions : [];
 
       const reactionCounts = {};
       reactions.forEach((r) => {
         if (r.type) reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1;
       });
 
-      const userReactionObj = reactions.find(r => r.user && r.user.toString() === userId);
+      const userReactionObj = reactions.find(r => r.user && r.user.toString() === userId.toString());
 
       return {
-      ...obj,
+        ...post,
         reactions,
         reactionCounts,
         totalReactions: reactions.length,
-        authorId: obj.author?.toString(),
+        authorId: post.author?.toString(),
         userReaction: userReactionObj?.type || null,
-        hasReacted:!!userReactionObj,
+        hasReacted: !!userReactionObj,
+        isSaved: savedSet.has(post._id.toString()) // <-- add this
       };
     });
 
