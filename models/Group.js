@@ -9,6 +9,13 @@ const groupSchema = new mongoose.Schema(
     creator: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     creatorPseudonym: { type: String },
     members: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+
+    // ✅ ADD THIS HERE
+    mutedMembers: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+
+    // ✅ ADD THIS HERE
+    isClosed: { type: Boolean, default: false },
+
     isPrivate: { type: Boolean, default: true }
   },
   { timestamps: true }
@@ -16,7 +23,7 @@ const groupSchema = new mongoose.Schema(
 
 groupSchema.index({ topic: 1 });
 
-groupSchema.pre('save', function(next) {
+groupSchema.pre("save", function (next) {
   if (this.isNew && !this.members.includes(this.creator)) {
     this.members.push(this.creator);
   }
