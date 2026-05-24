@@ -65,8 +65,7 @@ const postSchema = new mongoose.Schema(
         message: "Maximum 5 hashtags per post",
       },
     },
-    detectedLang: { type: String, default: null },
-    isTranslatable: { type: Boolean, default: false },
+
 
     // Add this:
     group: {

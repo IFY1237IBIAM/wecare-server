@@ -3,7 +3,7 @@ const Report = require("../models/Report");
 const { analyzeContent } = require("../middleware/contentModerator");
 const Notification = require("../models/Notification");
 const { sendPushNotification } = require("../utils/sendPush");
-const franc = require("franc");
+
 
 // @route POST /api/posts
 exports.createPost = async (req, res) => {
@@ -29,9 +29,7 @@ exports.createPost = async (req, res) => {
      .filter((t) => t.length <= 32)
      .slice(0, 5);
     const hashtags = [...new Set(extracted)];
-    const detectedLang = franc.franc(content.trim(), { minLength: 10 }) || null;
-    console.log("Franc result:", detectedLang, "Content:", content);
-
+   
     // Calculate if translation is needed
     const isTranslatable = detectedLang && detectedLang!== req.user.preferredLanguage;
     const post = await Post.create({
@@ -42,8 +40,7 @@ exports.createPost = async (req, res) => {
       hashtags,
       flagged: modResult.flags.length > 0,
       flagType: modResult.flags[0]?.type || null,
-      detectedLang, // add this
-      isTranslatable, // add this
+   
     });
 
     const obj = post.toObject();
