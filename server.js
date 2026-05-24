@@ -8,7 +8,7 @@ const rateLimit = require("express-rate-limit");
 const { runCleanup } = require("./utils/cleanupJob");
 const connectDB = require("./config/db");
 const jwt = require("jsonwebtoken");
-const translateRoute = require("./routes/translate.js").default;
+
 const User = require("./models/User");
 
 const emailRoutes = require("./routes/emailRoutes");
@@ -127,7 +127,7 @@ app.use("/api/notifications", require("./routes/notificationRoutes"));
 app.use("/api/admin", require("./routes/adminRoutes"));
 app.use("/api/checkin", require("./routes/checkInRoutes"));
 app.use("/api/groups", groupLimiter, require("./routes/groupRoutes"));
-app.use("/api", translateRoute);
+
 app.use("/api/appeals", require("./routes/appealRoutes"));
 app.use("/api/settings", require("./routes/settingsRoutes"));
 app.use("/api/email", emailRoutes);

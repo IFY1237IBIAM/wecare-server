@@ -31,7 +31,7 @@ exports.createPost = async (req, res) => {
     const hashtags = [...new Set(extracted)];
    
     // Calculate if translation is needed
-    const isTranslatable = detectedLang && detectedLang!== req.user.preferredLanguage;
+  
     const post = await Post.create({
       author: req.user._id,
       pseudonym: req.user.pseudonym,
