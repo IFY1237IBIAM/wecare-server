@@ -54,6 +54,7 @@ const postSchema = new mongoose.Schema(
     reactions: [reactionSchema],
     comments: [commentSchema],
     commentCount: { type: Number, default: 0 },
+    repostCount: { type: Number, default: 0 }, // ← NEW
     flagged: { type: Boolean, default: false },
     flagType: { type: String, default: null },
     edited: { type: Boolean, default: false },
@@ -65,17 +66,14 @@ const postSchema = new mongoose.Schema(
         message: "Maximum 5 hashtags per post",
       },
     },
-
-
-    // Add this:
     group: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Group",
-      default: null
+      default: null,
     },
   },
   { timestamps: true }
-);;
+);
 
 postSchema.index({ createdAt: -1 });
 postSchema.index({ hashtags: 1 });

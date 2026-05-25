@@ -1,9 +1,9 @@
 const Post = require("../models/Post");
 const Report = require("../models/Report");
+const Repost = require("../models/Repost"); // ← NEW
 const { analyzeContent } = require("../middleware/contentModerator");
 const Notification = require("../models/Notification");
 const { sendPushNotification } = require("../utils/sendPush");
-
 
 // @route POST /api/posts
 exports.createPost = async (req, res) => {
@@ -29,9 +29,7 @@ exports.createPost = async (req, res) => {
      .filter((t) => t.length <= 32)
      .slice(0, 5);
     const hashtags = [...new Set(extracted)];
-   
-    // Calculate if translation is needed
-  
+
     const post = await Post.create({
       author: req.user._id,
       pseudonym: req.user.pseudonym,
@@ -40,7 +38,6 @@ exports.createPost = async (req, res) => {
       hashtags,
       flagged: modResult.flags.length > 0,
       flagType: modResult.flags[0]?.type || null,
-   
     });
 
     const obj = post.toObject();
@@ -73,8 +70,6 @@ exports.createPost = async (req, res) => {
 };
 
 // @route GET /api/posts
-// @route GET /api/posts
-// @route GET /api/posts
 exports.getFeed = async (req, res) => {
   try {
     const User = require("../models/User");
@@ -86,6 +81,10 @@ exports.getFeed = async (req, res) => {
     const user = await User.findById(userId).select("savedPosts");
     const savedSet = new Set(user.savedPosts.map(id => id.toString()));
 
+    // Get user's reposts once
+    const userReposts = await Repost.find({ user: userId }).select("originalPost").lean();
+    const repostedSet = new Set(userReposts.map(r => r.originalPost.toString()));
+
     const query = {
       author: { $ne: userId }, // hide own posts
     };
@@ -94,7 +93,20 @@ exports.getFeed = async (req, res) => {
     const posts = await Post.find(query)
       .sort({ createdAt: -1 })
       .limit(limit)
-      .lean(); // use lean so we can add fields easily
+      .lean();
+
+    // Fetch reposts for feed (most recent reposts by others)
+    const repostQuery = { user: { $ne: userId } };
+    if (lastId) repostQuery._id = { $lt: lastId };
+
+    const reposts = await Repost.find(repostQuery)
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .populate({
+        path: "originalPost",
+        model: "Post",
+      })
+      .lean();
 
     const postsWithReactions = posts.map((post) => {
       const reactions = Array.isArray(post.reactions) ? post.reactions : [];
@@ -114,18 +126,64 @@ exports.getFeed = async (req, res) => {
         authorId: post.author?.toString(),
         userReaction: userReactionObj?.type || null,
         hasReacted: !!userReactionObj,
-        isSaved: savedSet.has(post._id.toString()) // <-- add this
+        isSaved: savedSet.has(post._id.toString()),
+        isReposted: repostedSet.has(post._id.toString()),
+        isRepostItem: false,
       };
     });
 
-    return res.json({ posts: postsWithReactions });
+    // Map reposts into feed items
+    const repostItems = reposts
+      .filter(r => r.originalPost) // guard against deleted original
+      .map(r => {
+        const original = r.originalPost;
+        const reactions = Array.isArray(original.reactions) ? original.reactions : [];
+        const reactionCounts = {};
+        reactions.forEach((rx) => {
+          if (rx.type) reactionCounts[rx.type] = (reactionCounts[rx.type] || 0) + 1;
+        });
+        const userReactionObj = reactions.find(rx => rx.user && rx.user.toString() === userId.toString());
+
+        return {
+          // Repost wrapper fields
+          _id: r._id.toString(),
+          isRepostItem: true,
+          repostId: r._id.toString(),
+          reposterPseudonym: r.pseudonym,
+          repostThought: r.thought || "",
+          repostCreatedAt: r.createdAt,
+          // Embedded original post
+          originalPost: {
+            ...original,
+            reactions,
+            reactionCounts,
+            totalReactions: reactions.length,
+            authorId: original.author?.toString(),
+            userReaction: userReactionObj?.type || null,
+            hasReacted: !!userReactionObj,
+            isSaved: savedSet.has(original._id.toString()),
+            isReposted: repostedSet.has(original._id.toString()),
+          },
+        };
+      });
+
+    // Merge and sort by date
+    const allItems = [
+      ...postsWithReactions,
+      ...repostItems,
+    ].sort((a, b) => {
+      const dateA = new Date(a.isRepostItem ? a.repostCreatedAt : a.createdAt);
+      const dateB = new Date(b.isRepostItem ? b.repostCreatedAt : b.createdAt);
+      return dateB - dateA;
+    }).slice(0, limit);
+
+    return res.json({ posts: allItems });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
 };
 
 
-// NEW: @route GET /api/posts/hashtag/:tag
 // NEW: @route GET /api/posts/hashtag/:tag
 exports.getPostsByHashtag = async (req, res) => {
   try {
@@ -134,7 +192,7 @@ exports.getPostsByHashtag = async (req, res) => {
 
     const limit = parseInt(req.query.limit) || 15;
     const lastId = req.query.lastId;
-    const userId = req.user._id.toString(); // <-- add this
+    const userId = req.user._id.toString();
 
     const query = { hashtags: tag };
     if (lastId) query._id = { $lt: lastId };
@@ -153,7 +211,7 @@ exports.getPostsByHashtag = async (req, res) => {
         if (r.type) reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1;
       });
 
-      const userReactionObj = reactions.find(r => r.user && r.user.toString() === userId); // <-- add this
+      const userReactionObj = reactions.find(r => r.user && r.user.toString() === userId);
 
       return {
         ...obj, 
@@ -161,8 +219,8 @@ exports.getPostsByHashtag = async (req, res) => {
         reactionCounts, 
         totalReactions: reactions.length,
         authorId: obj.author?.toString(),
-        userReaction: userReactionObj?.type || null, // <-- add this
-        hasReacted:!!userReactionObj, // <-- add this
+        userReaction: userReactionObj?.type || null,
+        hasReacted:!!userReactionObj,
       };
     });
 
@@ -235,7 +293,6 @@ try {
           reactionType: newReaction.type,
         });
 
-        // ADD THIS:
         await sendPushNotification(freshPost.author, {
           title: `${req.user.pseudonym} reacted to your post`,
           body: newReaction.type,
@@ -307,7 +364,7 @@ exports.addComment = async (req, res) => {
             createdAt: new Date(),
           },
         },
-        $inc: { commentCount: 1 }, // ← increment
+        $inc: { commentCount: 1 },
       },
       { new: true, runValidators: false }
     );
@@ -392,7 +449,6 @@ exports.addReply = async (req, res) => {
       createdAt: new Date(),
     });
 
-    // increment commentCount
     post.commentCount = (post.commentCount || 0) + 1;
 
     await post.save({ validateBeforeSave: false });
@@ -543,7 +599,7 @@ exports.savePost = async (req, res) => {
 exports.searchPosts = async (req, res) => {
   try {
     const { q, mood, author } = req.query;
-    const userId = req.user._id.toString(); // <-- add this
+    const userId = req.user._id.toString();
 
     if (!q || q.trim().length < 2) {
       return res.status(400).json({ message: "Search query must be at least 2 characters" });
@@ -580,7 +636,7 @@ exports.searchPosts = async (req, res) => {
         if (r.type) reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1;
       });
 
-      const userReactionObj = reactions.find(r => r.user && r.user.toString() === userId); // <-- add this
+      const userReactionObj = reactions.find(r => r.user && r.user.toString() === userId);
 
       return {
         ...obj,
@@ -588,8 +644,8 @@ exports.searchPosts = async (req, res) => {
         reactionCounts,
         totalReactions: reactions.length,
         authorId: obj.author?.toString(),
-        userReaction: userReactionObj?.type || null, // <-- add this
-        hasReacted:!!userReactionObj, // <-- add this
+        userReaction: userReactionObj?.type || null,
+        hasReacted:!!userReactionObj,
       };
     });
 
@@ -616,7 +672,6 @@ exports.editComment = async (req, res) => {
     const comment = post.comments.id(req.params.commentId);
     if (!comment) return res.status(404).json({ message: "Comment not found" });
 
-    // Only comment author can edit
     if (comment.author.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: "Not authorized to edit this comment" });
     }
@@ -625,7 +680,6 @@ exports.editComment = async (req, res) => {
     comment.edited = true;
     await post.save({ validateBeforeSave: false });
 
-    // Emit real-time event
     if (req.io) {
       req.io.to(`post:${req.params.id}`).emit("comment_updated", {
         postId: req.params.id,
@@ -640,8 +694,6 @@ exports.editComment = async (req, res) => {
     return res.status(500).json({ message: error.message });
   }
 };
-
-
 
 
 // @route DELETE /api/posts/:id/comments/:commentId
@@ -660,16 +712,13 @@ exports.deleteComment = async (req, res) => {
       return res.status(403).json({ message: "Not authorized to delete this comment" });
     }
 
-    // Count: 1 for the comment + all active replies under it
     const activeReplies = comment.replies.filter((r) => !r.deleted).length;
     const countToRemove = 1 + activeReplies;
 
-    // Soft delete comment AND all its replies
     comment.text = "This comment was deleted.";
     comment.deleted = true;
     comment.deletedAt = new Date();
 
-    // Soft delete all replies under this comment too
     for (const reply of comment.replies) {
       if (!reply.deleted) {
         reply.text = "This reply was deleted.";
@@ -744,8 +793,6 @@ exports.editReply = async (req, res) => {
 };
 
 
-
-
 // @route DELETE /api/posts/:id/comments/:commentId/replies/:replyId
 exports.deleteReply = async (req, res) => {
   try {
@@ -786,6 +833,110 @@ exports.deleteReply = async (req, res) => {
       message: "Reply deleted 💜",
       commentCount: post.commentCount,
     });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+// ─────────────────────────────────────────────
+// REPOST CONTROLLERS — NEW
+// ─────────────────────────────────────────────
+
+// @route POST /api/posts/:id/repost
+exports.createRepost = async (req, res) => {
+  try {
+    const { thought } = req.body;
+    const postId = req.params.id;
+
+    const post = await Post.findById(postId);
+    if (!post) return res.status(404).json({ message: "Post not found" });
+
+    // Prevent self-repost
+    if (post.author.toString() === req.user._id.toString()) {
+      return res.status(400).json({ message: "You cannot repost your own post" });
+    }
+
+    // Check for duplicate
+    const existing = await Repost.findOne({ user: req.user._id, originalPost: postId });
+    if (existing) {
+      return res.status(400).json({ message: "You have already reposted this" });
+    }
+
+    const repost = await Repost.create({
+      user: req.user._id,
+      originalPost: postId,
+      thought: thought?.trim() || "",
+      pseudonym: req.user.pseudonym,
+    });
+
+    // Increment repostCount on original post
+    await Post.findByIdAndUpdate(postId, { $inc: { repostCount: 1 } });
+
+    // Notify original post author
+    try {
+      await Notification.create({
+        recipient: post.author,
+        sender: req.user._id,
+        senderPseudonym: req.user.pseudonym,
+        type: "repost",
+        post: postId,
+        postPreview: post.content?.substring(0, 60),
+      });
+
+      await sendPushNotification(post.author, {
+        title: `${req.user.pseudonym} reposted your story`,
+        body: thought?.trim() ? `"${thought.trim().substring(0, 60)}"` : "Your story is being shared 💜",
+        data: { screen: "Feed", postId: postId.toString(), type: "repost" },
+      });
+    } catch (e) {
+      console.log("Repost notification error:", e.message);
+    }
+
+    return res.status(201).json({
+      message: "Reposted 💜",
+      repost,
+      repostCount: post.repostCount + 1,
+    });
+  } catch (error) {
+    if (error.code === 11000) {
+      return res.status(400).json({ message: "You have already reposted this" });
+    }
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+// @route DELETE /api/posts/:id/repost
+exports.deleteRepost = async (req, res) => {
+  try {
+    const postId = req.params.id;
+
+    const repost = await Repost.findOne({ user: req.user._id, originalPost: postId });
+    if (!repost) return res.status(404).json({ message: "Repost not found" });
+
+    await repost.deleteOne();
+
+    // Decrement repostCount
+    await Post.findByIdAndUpdate(postId, { $inc: { repostCount: -1 } });
+
+    const updated = await Post.findById(postId).select("repostCount");
+
+    return res.json({
+      message: "Repost removed",
+      repostCount: Math.max(0, updated?.repostCount || 0),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+// @route GET /api/posts/:id/reposts
+exports.getReposts = async (req, res) => {
+  try {
+    const reposts = await Repost.find({ originalPost: req.params.id })
+      .sort({ createdAt: -1 })
+      .limit(20)
+      .lean();
+    return res.json({ reposts });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }

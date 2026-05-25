@@ -4,7 +4,7 @@ const postController = require("../controllers/postController");
 const { protect } = require("../middleware/authMiddleware");
 
 router.get("/search", protect, postController.searchPosts);
-router.get("/hashtag/:tag", protect, postController.getPostsByHashtag); // ← add here
+router.get("/hashtag/:tag", protect, postController.getPostsByHashtag);
 router.get("/feed", protect, postController.getFeed);
 router.get("/", protect, postController.getFeed);
 router.get("/:id", protect, async (req, res) => {
@@ -33,4 +33,10 @@ router.put("/:id/comments/:commentId", protect, postController.editComment);
 router.delete("/:id/comments/:commentId", protect, postController.deleteComment);
 router.put("/:id/comments/:commentId/replies/:replyId", protect, postController.editReply);
 router.delete("/:id/comments/:commentId/replies/:replyId", protect, postController.deleteReply);
+
+// ── Repost routes ────────────────────────────────────────────
+router.post("/:id/repost", protect, postController.createRepost);
+router.delete("/:id/repost", protect, postController.deleteRepost);
+router.get("/:id/reposts", protect, postController.getReposts);
+
 module.exports = router;
