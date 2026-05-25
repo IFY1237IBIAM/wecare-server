@@ -7,7 +7,7 @@ const notificationSchema = new mongoose.Schema(
     senderPseudonym: { type: String, required: true },
     type: {
       type: String,
-      enum: ["reaction", "comment", "reply", "warning", "ban", "post_removed"],
+      enum: ["reaction", "comment", "reply", "warning", "ban", "post_removed", "repost"], // ← added "repost"
       required: true,
     },
     post: { type: mongoose.Schema.Types.ObjectId, ref: "Post" },
