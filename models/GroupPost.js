@@ -1,57 +1,18 @@
 const mongoose = require("mongoose");
 
-const commentSchema = new mongoose.Schema(
-  {
-    author: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-    pseudonym: { type: String, required: true },
-    text: { type: String, required: true, trim: true, maxlength: 300 },
-    isPostAuthor: { type: Boolean, default: false },
-    editedAt: { type: Date },
-
-    // ADD THESE FOR DELETE/COPY ACTIONS
-    deleted: { type: Boolean, default: false },
-    deletedAt: { type: Date },
-  },
-  { timestamps: true }
-);
-
 const groupPostSchema = new mongoose.Schema(
   {
     group: { type: mongoose.Schema.Types.ObjectId, ref: "Group", required: true },
     author: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     pseudonym: { type: String, required: true },
-    content: { type: String, required: true, trim: true, maxlength: 500 },
-
-    mood: {
-      type: String,
-      enum: ["heartbreak", "fear", "sadness", "struggle", "hope", "joy", "calm"],
-      default: "hope",
-    },
-
-    reactions: [
-      {
-        user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-        type: { type: String, enum: ["care", "heart", "hug", "strong", "cry", "hope"] },
-      },
-    ],
-
-    // reply system
-    replyTo: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "GroupPost",
-      default: null,
-    },
-
-    comments: [commentSchema],
-
-    // ADD THESE FOR DELETE/COPY ACTIONS
+    content: { type: String, required: true },
+    mood: { type: String, default: "hope" },
+    replyTo: { type: mongoose.Schema.Types.ObjectId, ref: "GroupPost", default: null },
     deleted: { type: Boolean, default: false },
-    deletedAt: { type: Date },
+    flagged: { type: Boolean, default: false },
+    flagType: { type: String, default: null },
   },
   { timestamps: true }
 );
 
-groupPostSchema.index({ group: 1, createdAt: -1 });
-groupPostSchema.index({ "reactions.user": 1 });
-
-module.exports = mongoose.model("GroupPost", groupPostSchema);
+module.exports = mongoose.models.GroupPost || mongoose.model("GroupPost", groupPostSchema);

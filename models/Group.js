@@ -2,32 +2,17 @@ const mongoose = require("mongoose");
 
 const groupSchema = new mongoose.Schema(
   {
-    name: { type: String, required: true, trim: true, maxlength: 50 },
-    topic: { type: String, required: true },
-    description: { type: String, maxlength: 300 },
+    name: { type: String, required: true, trim: true },
+    topic: { type: String, required: true, trim: true },
+    description: { type: String, default: "" },
     icon: { type: String, default: "💜" },
     creator: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-    creatorPseudonym: { type: String },
+    creatorPseudonym: { type: String, required: true },
     members: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
-
-    // ✅ ADD THIS HERE
     mutedMembers: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
-
-    // ✅ ADD THIS HERE
     isClosed: { type: Boolean, default: false },
-
-    isPrivate: { type: Boolean, default: true }
   },
   { timestamps: true }
 );
 
-groupSchema.index({ topic: 1 });
-
-groupSchema.pre("save", function (next) {
-  if (this.isNew && !this.members.includes(this.creator)) {
-    this.members.push(this.creator);
-  }
-  next();
-});
-
-module.exports = mongoose.model("Group", groupSchema);
+module.exports = mongoose.models.Group || mongoose.model("Group", groupSchema);
