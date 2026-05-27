@@ -10,6 +10,8 @@ const connectDB = require("./config/db");
 const jwt = require("jsonwebtoken");
 
 const User = require("./models/User");
+require("./models/GroupAuditLog");
+require("./models/GroupReport");
 
 const emailRoutes = require("./routes/emailRoutes");
 const morgan = require("morgan");

@@ -21,7 +21,6 @@ const userSchema = new mongoose.Schema(
       minlength: [3, "Pseudonym must be at least 3 characters"],
       maxlength: [20, "Pseudonym cannot exceed 20 characters"],
     },
-
     email: {
       type: String,
       required: [true, "Email is required"],
@@ -30,50 +29,49 @@ const userSchema = new mongoose.Schema(
       trim: true,
       match: [/^\S+@\S+\.\S+$/, "Please enter a valid email"],
     },
-
     password: {
       type: String,
       required: [true, "Password is required"],
       minlength: [8, "Password must be at least 8 characters"],
       select: false,
     },
-
     role: {
       type: String,
       enum: ["user", "admin", "moderator"],
       default: "user",
     },
-
     avatar: {
       color: { type: String, default: () => getRandomColor() },
       shape: { type: String, default: () => getRandomShape() },
     },
 
-    // Email verification
+    // ── Email Verification ───────────────────────────────────────────────────
     isVerified: { type: Boolean, default: false },
     emailVerificationToken: { type: String, select: false },
     emailVerificationCode: { type: String, select: false },
     emailVerificationExpiry: { type: Date, select: false },
 
-    // Password reset
+    // ── Password Reset ───────────────────────────────────────────────────────
     passwordResetCode: { type: String, select: false },
     passwordResetExpiry: { type: Date, select: false },
 
+    // ── Profile ──────────────────────────────────────────────────────────────
     bio: { type: String, maxlength: 100, default: "" },
-
     lastSeen: { type: Date, default: Date.now },
     isOnline: { type: Boolean, default: false },
     showOnlineStatus: { type: Boolean, default: true },
-
     savedPosts: [{ type: mongoose.Schema.Types.ObjectId, ref: "Post" }],
 
+    // ── Push Notifications ───────────────────────────────────────────────────
+    // Stored by usePushNotifications hook via POST /api/notifications/token
+    // Required for streak milestone push notifications and all other pushes
+    expoPushToken: { type: String, default: null },
+
+    // ── Moderation ───────────────────────────────────────────────────────────
     reportCount: { type: Number, default: 0 },
     confirmedViolations: { type: Number, default: 0 },
-
     isBanned: { type: Boolean, default: false },
-
     violations: { type: [String], default: [] },
-
     appealStatus: {
       type: String,
       enum: ["none", "pending", "rejected", "accepted"],
@@ -83,16 +81,13 @@ const userSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Password hashing
 userSchema.pre("save", async function (next) {
   if (!this.isModified("password")) return next();
-
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);
   next();
 });
 
-// Password check
 userSchema.methods.matchPassword = async function (enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
 };

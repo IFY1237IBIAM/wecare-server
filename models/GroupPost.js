@@ -11,8 +11,22 @@ const groupPostSchema = new mongoose.Schema(
     deleted: { type: Boolean, default: false },
     flagged: { type: Boolean, default: false },
     flagType: { type: String, default: null },
+
+    // Message status
+    deliveredTo: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+    readBy: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+
+    // Edit support (within 5 min)
+    isEdited: { type: Boolean, default: false },
+    editedAt: { type: Date, default: null },
+    editHistory: [{
+      content: String,
+      editedAt: { type: Date, default: Date.now },
+    }],
   },
   { timestamps: true }
 );
+
+groupPostSchema.index({ group: 1, createdAt: 1 });
 
 module.exports = mongoose.models.GroupPost || mongoose.model("GroupPost", groupPostSchema);

@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const { protect } = require("../middleware/authMiddleware");
 const CheckIn = require("../models/CheckIn");
-const User = require("../models/User");
+const NotificationToken = require("../models/NotificationToken"); // multi-device token store
 const { Expo } = require("expo-server-sdk");
 
 const expo = new Expo();
@@ -41,25 +41,33 @@ const MILESTONE_MESSAGES = {
 
 async function sendStreakPushNotification(userId, milestone) {
   try {
-    const user = await User.findById(userId).select("expoPushToken");
-    if (!user?.expoPushToken) return;
-    if (!Expo.isExpoPushToken(user.expoPushToken)) return;
-
     const msg = MILESTONE_MESSAGES[milestone];
     if (!msg) return;
 
-    await expo.sendPushNotificationsAsync([
-      {
-        to: user.expoPushToken,
-        sound: "default",
-        title: msg.title,
-        body: msg.body,
-        data: { type: "streak_milestone", milestone, screen: "CheckIn" },
-        priority: "high",
-      },
-    ]);
+    // Fetch ALL tokens registered for this user (multi-device support)
+    const tokenDocs = await NotificationToken.find({ user: userId }).select("expoPushToken");
+    if (!tokenDocs.length) return;
 
-    console.log(`✅ Streak milestone notification sent to ${userId} — ${milestone} days`);
+    // Filter to valid Expo tokens only
+    const validTokens = tokenDocs
+      .map((t) => t.expoPushToken)
+      .filter((token) => Expo.isExpoPushToken(token));
+
+    if (!validTokens.length) return;
+
+    // Build one message per device
+    const messages = validTokens.map((token) => ({
+      to: token,
+      sound: "default",
+      title: msg.title,
+      body: msg.body,
+      data: { type: "streak_milestone", milestone, screen: "CheckIn" },
+      priority: "high",
+    }));
+
+    await expo.sendPushNotificationsAsync(messages);
+
+    console.log(`✅ Streak milestone (${milestone} days) sent to ${validTokens.length} device(s) for user ${userId}`);
   } catch (err) {
     // Non-fatal — never block a check-in over a notification failure
     console.error("Streak push notification error:", err.message);

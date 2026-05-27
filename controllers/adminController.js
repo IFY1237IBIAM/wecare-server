@@ -4,6 +4,7 @@ const User = require("../models/User");
 const Notification = require("../models/Notification");
 const AdminAction = require("../models/AdminAction");
 const Appeal = require("../models/Appeal");
+const GroupReport = require("../models/GroupReport");
 
 exports.getReportedPosts = async (req, res) => {
   try {
@@ -32,13 +33,9 @@ exports.getReportedPosts = async (req, res) => {
           return acc;
         }, {});
         return {
-          postId: r._id,
-          post,
-          reportCount: r.reportCount,
-          reasons: reasonCounts,
-          latestReport: r.latestReport,
-          postContent: r.postContent,
-          postPseudonym: r.postPseudonym,
+          postId: r._id, post, reportCount: r.reportCount,
+          reasons: reasonCounts, latestReport: r.latestReport,
+          postContent: r.postContent, postPseudonym: r.postPseudonym,
           reportIds: r.reportIds,
         };
       })
@@ -59,20 +56,12 @@ exports.deleteReportedPost = async (req, res) => {
     if (!post) return res.status(404).json({ message: "Post not found" });
 
     const postAuthor = await User.findById(post.author);
-
     let userBanned = false;
     let newViolationCount = 0;
 
     if (postAuthor) {
-      const alreadyCounted = await AdminAction.findOne({
-        targetPost: postId,
-        action: "delete_post",
-      });
-
-      if (!alreadyCounted) {
-        postAuthor.confirmedViolations = (postAuthor.confirmedViolations || 0) + 1;
-      }
-
+      const alreadyCounted = await AdminAction.findOne({ targetPost: postId, action: "delete_post" });
+      if (!alreadyCounted) postAuthor.confirmedViolations = (postAuthor.confirmedViolations || 0) + 1;
       newViolationCount = postAuthor.confirmedViolations;
 
       if (postAuthor.confirmedViolations >= 3 && !postAuthor.isBanned) {
@@ -81,7 +70,6 @@ exports.deleteReportedPost = async (req, res) => {
         postAuthor.appealStatus = "none";
         await Appeal.deleteMany({ user: postAuthor._id });
       }
-
       await postAuthor.save({ validateBeforeSave: false });
 
       if (notifyUser !== false) {
@@ -115,7 +103,6 @@ exports.deleteReportedPost = async (req, res) => {
     }
 
     await Report.updateMany({ post: postId }, { status: "actioned" });
-
     await AdminAction.create({
       admin: req.user._id,
       adminPseudonym: req.user.pseudonym,
@@ -125,14 +112,9 @@ exports.deleteReportedPost = async (req, res) => {
       reason: reason || "Community guideline violation",
       reportCount: newViolationCount,
     });
-
     await post.deleteOne();
 
-    return res.json({
-      message: "Post deleted and user notified 💜",
-      userBanned,
-      violationCount: newViolationCount,
-    });
+    return res.json({ message: "Post deleted and user notified 💜", userBanned, violationCount: newViolationCount });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
@@ -146,23 +128,11 @@ exports.getBannedUsers = async (req, res) => {
 
     const enriched = await Promise.all(
       bannedUsers.map(async (user) => {
-        const lastAction = await AdminAction.findOne({
-          targetUser: user._id,
-          action: "delete_post",
-        })
+        const lastAction = await AdminAction.findOne({ targetUser: user._id, action: "delete_post" })
           .sort({ createdAt: -1 })
           .select("reason createdAt adminPseudonym");
-
-        const rejectedAppeal = await Appeal.findOne({
-          user: user._id,
-          status: "rejected",
-        });
-
-        const pendingAppeal = await Appeal.findOne({
-          user: user._id,
-          status: "pending",
-        });
-
+        const rejectedAppeal = await Appeal.findOne({ user: user._id, status: "rejected" });
+        const pendingAppeal = await Appeal.findOne({ user: user._id, status: "pending" });
         return {
           _id: user._id,
           pseudonym: user.pseudonym,
@@ -192,7 +162,6 @@ exports.dismissReport = async (req, res) => {
     if (!postId) return res.status(400).json({ message: "Post ID required" });
 
     await Report.updateMany({ post: postId }, { status: "dismissed" });
-
     await AdminAction.create({
       admin: req.user._id,
       adminPseudonym: req.user.pseudonym,
@@ -200,7 +169,6 @@ exports.dismissReport = async (req, res) => {
       targetPost: postId,
       reason: reason || "No violation found",
     });
-
     return res.json({ message: "Report dismissed" });
   } catch (error) {
     return res.status(500).json({ message: error.message });
@@ -216,12 +184,9 @@ exports.unbanUser = async (req, res) => {
     if (!user) return res.status(404).json({ message: "User not found" });
 
     user.isBanned = false;
-    if (resetViolations) {
-      user.confirmedViolations = 0;
-    }
+    if (resetViolations) user.confirmedViolations = 0;
     user.appealStatus = "reinstated";
     await user.save({ validateBeforeSave: false });
-
     await Appeal.deleteMany({ user: user._id });
 
     await Notification.create({
@@ -267,16 +232,9 @@ exports.getUserInfo = async (req, res) => {
       .limit(5)
       .select("action reason createdAt adminPseudonym");
 
-    const rejectedAppeal = await Appeal.findOne({
-      user: user._id,
-      status: "rejected",
-    });
+    const rejectedAppeal = await Appeal.findOne({ user: user._id, status: "rejected" });
 
-    return res.json({
-      user,
-      recentActivity,
-      hasRejectedAppeal: !!rejectedAppeal,
-    });
+    return res.json({ user, recentActivity, hasRejectedAppeal: !!rejectedAppeal });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
@@ -284,9 +242,7 @@ exports.getUserInfo = async (req, res) => {
 
 exports.getAdminActions = async (req, res) => {
   try {
-    const actions = await AdminAction.find()
-      .sort({ createdAt: -1 })
-      .limit(50);
+    const actions = await AdminAction.find().sort({ createdAt: -1 }).limit(50);
     return res.json({ actions });
   } catch (error) {
     return res.status(500).json({ message: error.message });
@@ -300,19 +256,53 @@ exports.getAdminStats = async (req, res) => {
     const totalPosts = await Post.countDocuments();
     const pendingReports = await Report.countDocuments({ status: "pending" });
     const totalActions = await AdminAction.countDocuments();
-    return res.json({ totalUsers, bannedUsers, totalPosts, pendingReports, totalActions });
+    const pendingGroupReports = await GroupReport.countDocuments({ status: "pending" });
+    return res.json({ totalUsers, bannedUsers, totalPosts, pendingReports, totalActions, pendingGroupReports });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
 };
 
-// @route GET /api/admin/appeals
 exports.getAppeals = async (req, res) => {
   try {
-    const appeals = await Appeal.find()
+    const appeals = await Appeal.find().sort({ createdAt: -1 }).limit(50);
+    return res.json({ appeals });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+// ── NEW: Group reports ─────────────────────────────────────────────────────
+exports.getGroupReports = async (req, res) => {
+  try {
+    const reports = await GroupReport.find({ status: "pending" })
       .sort({ createdAt: -1 })
       .limit(50);
-    return res.json({ appeals });
+    return res.json({ reports });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+exports.reviewGroupReport = async (req, res) => {
+  try {
+    const { action, reason } = req.body; // action: "actioned" | "dismissed"
+    const report = await GroupReport.findById(req.params.reportId);
+    if (!report) return res.status(404).json({ message: "Report not found" });
+
+    report.status = action === "actioned" ? "actioned" : "dismissed";
+    await report.save();
+
+    await AdminAction.create({
+      admin: req.user._id,
+      adminPseudonym: req.user.pseudonym,
+      action: "group_report_reviewed",
+      targetUser: report.targetUser,
+      targetGroup: report.group,
+      reason: reason || `Group report ${action}`,
+    });
+
+    return res.json({ message: `Report ${action}` });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
