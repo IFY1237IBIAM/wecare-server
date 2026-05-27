@@ -12,6 +12,10 @@ router.get("/actions", adminController.getAdminActions);
 router.get("/stats", adminController.getAdminStats);
 router.get("/appeals", adminController.getAppeals);
 
+// ── NEW: Group reports ──────────────────────────────────────────────────────
+router.get("/group-reports", adminController.getGroupReports);
+router.patch("/group-reports/:reportId", adminController.reviewGroupReport);
+
 router.post("/delete-post", adminController.deleteReportedPost);
 router.post("/dismiss-report", adminController.dismissReport);
 router.post("/unban-user", adminController.unbanUser);
