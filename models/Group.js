@@ -32,17 +32,19 @@ const groupSchema = new mongoose.Schema(
 
     isClosed: { type: Boolean, default: false },
 
-    // Pinned message/resource
+    // Pinned message — any member can pin, stores who pinned and which post
     pinnedMessage: {
-      content: { type: String, default: null },
-      pinnedBy: { type: String, default: null },
-      pinnedAt: { type: Date, default: null },
+      content:           { type: String, default: null },
+      pinnedBy:          { type: String, default: null },           // user _id string
+      pinnedByPseudonym: { type: String, default: null },           // display name
+      pinnedAt:          { type: Date,   default: null },
+      postId:            { type: String, default: null },           // for scroll-to on frontend
     },
   },
   { timestamps: true }
 );
 
-// Helper: check if a user is currently muted (auto-expire)
+// ── Helper: check if a user is currently muted (auto-expire) ──────────────
 groupSchema.methods.isUserMuted = function (userId) {
   const entry = this.mutedMembers.find(
     (m) => m.user.toString() === userId.toString()
@@ -52,7 +54,7 @@ groupSchema.methods.isUserMuted = function (userId) {
   return true;
 };
 
-// Helper: get mute info for a user
+// ── Helper: get mute info for a user ─────────────────────────────────────
 groupSchema.methods.getMuteInfo = function (userId) {
   return this.mutedMembers.find(
     (m) => m.user.toString() === userId.toString()

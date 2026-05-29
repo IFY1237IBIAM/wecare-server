@@ -690,9 +690,8 @@ router.post("/:groupId/close", protect, requireMember, async (req, res) => {
 router.post("/:groupId/pin", protect, requireMember, async (req, res) => {
   try {
     const group = await Group.findById(req.params.groupId);
-    const requestingUser = await User.findById(req.user._id).select("email");
-    if (!isCircleKeeper(group, req.user, requestingUser?.email))
-      return res.status(403).json({ message: "Only the Circle_Keeper can pin messages" });
+    if (req.isRemovedMember)
+      return res.status(403).json({ message: "You are not a member." });
 
     const { content } = req.body;
     group.pinnedMessage = content
