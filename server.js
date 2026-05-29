@@ -8,6 +8,7 @@ const rateLimit = require("express-rate-limit");
 const { runCleanup } = require("./utils/cleanupJob");
 const connectDB = require("./config/db");
 const jwt = require("jsonwebtoken");
+const path = require("path");
 
 const User = require("./models/User");
 require("./models/GroupAuditLog");
@@ -133,6 +134,23 @@ app.use("/api/groups", groupLimiter, require("./routes/groupRoutes"));
 app.use("/api/appeals", require("./routes/appealRoutes"));
 app.use("/api/settings", require("./routes/settingsRoutes"));
 app.use("/api/email", emailRoutes);
+
+// ====================== WEB FALLBACK FOR SHARED POSTS ======================
+
+// Serve static files
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Handle post routes - MUST be before 404 handler
+app.get('/post/:postId*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'post', 'index.html'));
+});
+
+app.get('/post', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'post', 'index.html'));
+});
+
+// ====================== END OF WEB FALLBACK ======================
+
 
 // Error handler - you had this, don't delete it
 app.use((err, req, res, next) => {
