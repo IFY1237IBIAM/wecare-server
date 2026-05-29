@@ -38,7 +38,9 @@ const groupSchema = new mongoose.Schema(
       pinnedBy:          { type: String, default: null },           // user _id string
       pinnedByPseudonym: { type: String, default: null },           // display name
       pinnedAt:          { type: Date,   default: null },
-      postId:            { type: String, default: null },           // for scroll-to on frontend
+      postId:            { type: String, default: null },
+      expiresAt:         { type: Date,   default: null },
+      duration:          { type: String, default: null },           // for scroll-to on frontend
     },
   },
   { timestamps: true }

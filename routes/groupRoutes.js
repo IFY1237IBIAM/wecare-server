@@ -693,11 +693,26 @@ router.post("/:groupId/pin", protect, requireMember, async (req, res) => {
     if (req.isRemovedMember)
       return res.status(403).json({ message: "You are not a member." });
 
-    const { content } = req.body;
+    const { content, postId, duration } = req.body;
+    const pinExpiresAt = (() => {
+      if (!content || !duration || duration === "permanent") return null;
+      const map = { "24h": 24, "3d": 72, "7d": 168 };
+      const hours = map[duration];
+      if (!hours) return null;
+      return new Date(Date.now() + hours * 60 * 60 * 1000);
+    })();
+
     group.pinnedMessage = content
-      ? { content, pinnedBy: req.user.pseudonym, pinnedAt: new Date() }
-      : { content: null, pinnedBy: null, pinnedAt: null };
-    await group.save();
+      ? {
+          content,
+          pinnedBy: req.user._id.toString(),
+          pinnedByPseudonym: req.user.pseudonym,
+          pinnedAt: new Date(),
+          postId: postId || null,
+          expiresAt: pinExpiresAt,
+          duration: duration || "permanent",
+        }
+      : { content: null, pinnedBy: null, pinnedByPseudonym: null, pinnedAt: null, postId: null, expiresAt: null, duration: null };
 
     if (req.io) {
       req.io.to(`group:${req.params.groupId}`).emit("pinned_message_updated", {
