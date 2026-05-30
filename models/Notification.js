@@ -1,5 +1,3 @@
-const mongoose = require("mongoose");
-
 const notificationSchema = new mongoose.Schema(
   {
     recipient: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
@@ -7,13 +5,14 @@ const notificationSchema = new mongoose.Schema(
     senderPseudonym: { type: String, required: true },
     type: {
       type: String,
-      enum: ["reaction", "comment", "reply", "warning", "ban", "post_removed", "repost"], // ← added "repost"
+      enum: ["reaction", "comment", "reply", "warning", "ban", "post_removed", "repost"],
       required: true,
     },
     post: { type: mongoose.Schema.Types.ObjectId, ref: "Post" },
     postPreview: { type: String },
     reactionType: { type: String },
     commentText: { type: String },
+    repostThought: { type: String },   // ← add here
     adminMessage: { type: String },
     adminReason: { type: String },
     nextStep: { type: String },
@@ -24,7 +23,3 @@ const notificationSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
-
-notificationSchema.index({ recipient: 1, createdAt: -1 });
-
-module.exports = mongoose.model("Notification", notificationSchema);

@@ -950,11 +950,7 @@ exports.createRepost = async (req, res) => {
     }
 
     // No self-repost
-    if (post.author.toString() === req.user._id.toString()) {
-      return res
-        .status(400)
-        .json({ message: "You cannot repost your own post" });
-    }
+    
 
     // No repost-of-repost: if this post's _id is actually a Repost's originalPost
     // we allow it (it IS the original). But we block if the user is trying to repost
@@ -988,29 +984,33 @@ exports.createRepost = async (req, res) => {
 
     await Post.findByIdAndUpdate(postId, { $inc: { repostCount: 1 } });
 
-    try {
-      await Notification.create({
-        recipient: post.author,
-        sender: req.user._id,
-        senderPseudonym: req.user.pseudonym,
-        type: "repost",
-        post: postId,
-        postPreview: post.content?.substring(0, 60),
-      });
-
-      await sendPushNotification(post.author, {
-        title: `${req.user.pseudonym} reposted your story`,
-        body: thought?.trim()
-          ? `"${thought.trim().substring(0, 60)}"`
-          : "Your story is being shared 💜",
-        data: {
-          screen: "Feed",
-          postId: postId.toString(),
+    // Only notify if someone else reposted (not the author reposting their own)
+    if (post.author.toString() !== req.user._id.toString()) {
+      try {
+        await Notification.create({
+          recipient: post.author,
+          sender: req.user._id,
+          senderPseudonym: req.user.pseudonym,
           type: "repost",
-        },
-      });
-    } catch (e) {
-      console.log("Repost notification error:", e.message);
+          post: postId,
+          postPreview: post.content?.substring(0, 60),
+          repostThought: thought?.trim() || "",
+        });
+
+        await sendPushNotification(post.author, {
+          title: `${req.user.pseudonym} reposted your story`,
+          body: thought?.trim()
+            ? `"${thought.trim().substring(0, 60)}"`
+            : "Your story is being shared 💜",
+          data: {
+            screen: "Feed",
+            postId: postId.toString(),
+            type: "repost",
+          },
+        });
+      } catch (e) {
+        console.log("Repost notification error:", e.message);
+      }
     }
 
     return res.status(201).json({
@@ -1025,7 +1025,6 @@ exports.createRepost = async (req, res) => {
     return res.status(500).json({ message: error.message });
   }
 };
-
 // @route DELETE /api/posts/:id/repost
 exports.deleteRepost = async (req, res) => {
   try {
