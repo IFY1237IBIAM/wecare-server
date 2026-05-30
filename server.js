@@ -19,13 +19,11 @@ const morgan = require("morgan");
 
 dotenv.config();
 connectDB();
-// Run cleanup once on startup then every 24 hours
 runCleanup();
 setInterval(runCleanup, 24 * 60 * 60 * 1000);
 const app = express();
 const httpServer = http.createServer(app);
 
-// Socket.IO initialization
 const io = new Server(httpServer, {
   cors: {
     origin: "*",
@@ -35,7 +33,6 @@ const io = new Server(httpServer, {
   pingInterval: 25000,
 });
 
-// Attach io to every request so controllers can emit events
 app.use((req, res, next) => {
   req.io = io;
   next();
@@ -46,20 +43,19 @@ app.use(helmet());
 app.use(cors());
 app.use(express.json());
 app.use(morgan("dev"));
-// ── Socket.IO auth middleware ──
+
 io.use(async (socket, next) => {
   try {
     const token = socket.handshake.auth.token;
     if (!token) return next(new Error("No token"));
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    socket.userId = decoded.id; // attach userId to socket
+    socket.userId = decoded.id;
     next();
   } catch (err) {
     next(new Error("Auth error"));
   }
 });
 
-// ── Socket.IO connection handling ──
 io.on("connection", (socket) => {
   console.log(`🔌 Socket connected: ${socket.id} user:${socket.userId}`);
 
@@ -83,14 +79,25 @@ io.on("connection", (socket) => {
     socket.leave(`group:${groupId}`);
   });
 
+  // ── NEW: let clients subscribe to a repost's secondary comment stream ──
+  socket.on("join_repost", (repostId) => {
+    if (!repostId) return;
+    socket.join(`repost:${repostId}`);
+  });
+
+  socket.on("leave_repost", (repostId) => {
+    if (!repostId) return;
+    socket.leave(`repost:${repostId}`);
+  });
+
   socket.on("typing", ({ groupId, userId, pseudonym }) => {
-    if (!groupId ||!userId ||!pseudonym) return;
+    if (!groupId || !userId || !pseudonym) return;
     socket.to(`group:${groupId}`).emit("user_typing", { groupId, userId, pseudonym });
   });
 
-  socket.on("stop_typing", ({ groupId, userId, pseudonym }) => {
-    if (!groupId ||!userId) return;
-    socket.to(`group:${groupId}`).emit("user_stop_typing", { groupId, userId, pseudonym });
+  socket.on("stop_typing", ({ groupId, userId }) => {
+    if (!groupId || !userId) return;
+    socket.to(`group:${groupId}`).emit("user_stop_typing", { groupId, userId });
   });
 
   socket.on("identify", (userId) => {
@@ -98,14 +105,13 @@ io.on("connection", (socket) => {
     socket.join(`user:${userId}`);
   });
 
-  socket.on("disconnect", (reason) => {
+  socket.on("disconnect", () => {
     console.log(`🔌 Socket disconnected: ${socket.id}`);
   });
 });
-// Make io accessible outside this file
+
 module.exports.io = io;
 
-// Rate limiting
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
@@ -124,23 +130,21 @@ app.get("/api/health", (req, res) => {
 });
 
 app.use("/api/auth/login", loginLimiter);
-app.use("/api/auth", require("./routes/authRoutes"));
-app.use("/api/posts", require("./routes/postRoutes"));
+app.use("/api/auth",          require("./routes/authRoutes"));
+app.use("/api/posts",         require("./routes/postRoutes"));
+// ── NEW: secondary repost comment stream lives at /api/reposts ────────────
+app.use("/api/reposts",       require("./routes/postRoutes").repostRouter);
 app.use("/api/notifications", require("./routes/notificationRoutes"));
-app.use("/api/admin", require("./routes/adminRoutes"));
-app.use("/api/checkin", require("./routes/checkInRoutes"));
-app.use("/api/groups", groupLimiter, require("./routes/groupRoutes"));
+app.use("/api/admin",         require("./routes/adminRoutes"));
+app.use("/api/checkin",       require("./routes/checkInRoutes"));
+app.use("/api/groups",        groupLimiter, require("./routes/groupRoutes"));
+app.use("/api/appeals",       require("./routes/appealRoutes"));
+app.use("/api/settings",      require("./routes/settingsRoutes"));
+app.use("/api/email",         emailRoutes);
 
-app.use("/api/appeals", require("./routes/appealRoutes"));
-app.use("/api/settings", require("./routes/settingsRoutes"));
-app.use("/api/email", emailRoutes);
-
-// ====================== WEB FALLBACK FOR SHARED POSTS ======================
-
-// Serve static files
+// ── Web fallback for shared posts ─────────────────────────────────────────
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Handle post routes - MUST be before 404 handler
 app.get('/post/:postId*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'post', 'index.html'));
 });
@@ -149,15 +153,12 @@ app.get('/post', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'post', 'index.html'));
 });
 
-// ====================== END OF WEB FALLBACK ======================
-
-
-// Error handler - you had this, don't delete it
+// ── Error handlers ────────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
   console.error(err.stack);
-  res.status(500).json({ 
-    message: "Server error", 
-    error: process.env.NODE_ENV === 'development' ? err.message : undefined 
+  res.status(500).json({
+    message: "Server error",
+    error: process.env.NODE_ENV === 'development' ? err.message : undefined,
   });
 });
 
@@ -170,5 +171,4 @@ httpServer.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
 
-// Export for testing/other files
 module.exports = { app, httpServer, io };

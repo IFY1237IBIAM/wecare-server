@@ -1,6 +1,6 @@
 const Post = require("../models/Post");
 const Report = require("../models/Report");
-const Repost = require("../models/Repost"); // ← NEW
+const Repost = require("../models/Repost");
 const { analyzeContent } = require("../middleware/contentModerator");
 const Notification = require("../models/Notification");
 const { sendPushNotification } = require("../utils/sendPush");
@@ -10,7 +10,7 @@ exports.createPost = async (req, res) => {
   try {
     const { content, mood } = req.body;
 
-    if (!content ||!content.trim()) {
+    if (!content || !content.trim()) {
       return res.status(400).json({ message: "Content is required" });
     }
 
@@ -18,16 +18,16 @@ exports.createPost = async (req, res) => {
 
     if (modResult.autoReject) {
       return res.status(400).json({
-        message: "Your post could not be shared as it may contain harmful content. Please review our community guidelines.",
+        message:
+          "Your post could not be shared as it may contain harmful content. Please review our community guidelines.",
         flagType: modResult.flags[0]?.type,
       });
     }
 
-    // Extract hashtags from content — max 5, lowercase, deduplicate
     const extracted = (content.match(/#\w+/g) || [])
-     .map((t) => t.toLowerCase())
-     .filter((t) => t.length <= 32)
-     .slice(0, 5);
+      .map((t) => t.toLowerCase())
+      .filter((t) => t.length <= 32)
+      .slice(0, 5);
     const hashtags = [...new Set(extracted)];
 
     const post = await Post.create({
@@ -38,10 +38,12 @@ exports.createPost = async (req, res) => {
       hashtags,
       flagged: modResult.flags.length > 0,
       flagType: modResult.flags[0]?.type || null,
+      // allowReposts defaults to true; users can disable via settings
+      allowReposts: true,
     });
 
     const obj = post.toObject();
-    const reactions = Array.isArray(obj.reactions)? obj.reactions : [];
+    const reactions = Array.isArray(obj.reactions) ? obj.reactions : [];
     const reactionCounts = {};
     reactions.forEach((r) => {
       if (r.type) reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1;
@@ -49,15 +51,19 @@ exports.createPost = async (req, res) => {
 
     const response = {
       message: "Post shared 💜",
-      post: {...obj, reactions, reactionCounts, totalReactions: reactions.length },
+      post: { ...obj, reactions, reactionCounts, totalReactions: reactions.length },
       crisisDetected: modResult.crisisDetected,
       autoFlagged: modResult.flags.length > 0,
     };
 
     if (modResult.crisisDetected) {
-      response.crisisMessage = "We noticed your post may be expressing thoughts of self-harm. You are not alone 💜";
+      response.crisisMessage =
+        "We noticed your post may be expressing thoughts of self-harm. You are not alone 💜";
       response.crisisResources = [
-        { name: "International Association for Suicide Prevention", url: "https://www.iasp.info/resources/Crisis_Centres/" },
+        {
+          name: "International Association for Suicide Prevention",
+          url: "https://www.iasp.info/resources/Crisis_Centres/",
+        },
         { name: "Crisis Text Line", info: "Text HOME to 741 (US)" },
         { name: "Befrienders Worldwide", url: "https://www.befrienders.org" },
       ];
@@ -70,7 +76,6 @@ exports.createPost = async (req, res) => {
 };
 
 // @route GET /api/posts
-// @route GET /api/posts
 exports.getFeed = async (req, res) => {
   try {
     const User = require("../models/User");
@@ -78,17 +83,17 @@ exports.getFeed = async (req, res) => {
     const lastId = req.query.lastId;
     const userId = req.user._id;
 
-    // Get user's saved posts once
     const user = await User.findById(userId).select("savedPosts");
-    const savedSet = new Set(user.savedPosts.map(id => id.toString()));
+    const savedSet = new Set(user.savedPosts.map((id) => id.toString()));
 
-    // Get user's reposts once
-    const userReposts = await Repost.find({ user: userId }).select("originalPost").lean();
-    const repostedSet = new Set(userReposts.map(r => r.originalPost.toString()));
+    const userReposts = await Repost.find({ user: userId })
+      .select("originalPost")
+      .lean();
+    const repostedSet = new Set(
+      userReposts.map((r) => r.originalPost.toString())
+    );
 
-    const query = {
-      author: { $ne: userId }, // hide own posts
-    };
+    const query = { author: { $ne: userId } };
     if (lastId) query._id = { $lt: lastId };
 
     const posts = await Post.find(query)
@@ -96,17 +101,14 @@ exports.getFeed = async (req, res) => {
       .limit(limit)
       .lean();
 
-    // Fetch reposts for feed (most recent reposts by others)
+    // Only include reposts of public / allowReposts posts
     const repostQuery = { user: { $ne: userId } };
     if (lastId) repostQuery._id = { $lt: lastId };
 
     const reposts = await Repost.find(repostQuery)
       .sort({ createdAt: -1 })
       .limit(limit)
-      .populate({
-        path: "originalPost",
-        model: "Post",
-      })
+      .populate({ path: "originalPost", model: "Post" })
       .lean();
 
     const postsWithReactions = posts.map((post) => {
@@ -115,7 +117,9 @@ exports.getFeed = async (req, res) => {
       reactions.forEach((r) => {
         if (r.type) reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1;
       });
-      const userReactionObj = reactions.find(r => r.user && r.user.toString() === userId.toString());
+      const userReactionObj = reactions.find(
+        (r) => r.user && r.user.toString() === userId.toString()
+      );
       return {
         ...post,
         reactions,
@@ -127,29 +131,41 @@ exports.getFeed = async (req, res) => {
         isSaved: savedSet.has(post._id.toString()),
         isReposted: repostedSet.has(post._id.toString()),
         isRepostItem: false,
+        // Expose allowReposts so frontend can hide the button
+        allowReposts: post.allowReposts !== false,
       };
     });
 
-    // Map reposts into feed items
     const repostItems = reposts
-      .filter(r => r.originalPost) // guard against deleted original
-      .map(r => {
+      .filter((r) => {
+        if (!r.originalPost) return false;
+        // Privacy guard: skip posts where creator disabled reposts
+        if (r.originalPost.allowReposts === false) return false;
+        return true;
+      })
+      .map((r) => {
         const original = r.originalPost;
-        const reactions = Array.isArray(original.reactions) ? original.reactions : [];
+        const reactions = Array.isArray(original.reactions)
+          ? original.reactions
+          : [];
         const reactionCounts = {};
         reactions.forEach((rx) => {
-          if (rx.type) reactionCounts[rx.type] = (reactionCounts[rx.type] || 0) + 1;
+          if (rx.type)
+            reactionCounts[rx.type] = (reactionCounts[rx.type] || 0) + 1;
         });
-        const userReactionObj = reactions.find(rx => rx.user && rx.user.toString() === userId.toString());
+        const userReactionObj = reactions.find(
+          (rx) => rx.user && rx.user.toString() === userId.toString()
+        );
         return {
-          // Repost wrapper fields
           _id: r._id.toString(),
           isRepostItem: true,
           repostId: r._id.toString(),
           reposterPseudonym: r.pseudonym,
           repostThought: r.thought || "",
           repostCreatedAt: r.createdAt,
-          // Embedded original post
+          // Resharer's secondary comment stream
+          repostComments: r.repostComments || [],
+          repostCommentCount: r.repostCommentCount || 0,
           originalPost: {
             ...original,
             reactions,
@@ -160,57 +176,53 @@ exports.getFeed = async (req, res) => {
             hasReacted: !!userReactionObj,
             isSaved: savedSet.has(original._id.toString()),
             isReposted: repostedSet.has(original._id.toString()),
+            allowReposts: original.allowReposts !== false,
           },
         };
       });
 
-    // Merge and sort by date
-    const allItems = [
-      ...postsWithReactions,
-      ...repostItems,
-    ].sort((a, b) => {
-      const dateA = new Date(a.isRepostItem ? a.repostCreatedAt : a.createdAt);
-      const dateB = new Date(b.isRepostItem ? b.repostCreatedAt : b.createdAt);
-      return dateB - dateA;
-    }).slice(0, limit);
+    const allItems = [...postsWithReactions, ...repostItems]
+      .sort((a, b) => {
+        const dateA = new Date(a.isRepostItem ? a.repostCreatedAt : a.createdAt);
+        const dateB = new Date(b.isRepostItem ? b.repostCreatedAt : b.createdAt);
+        return dateB - dateA;
+      })
+      .slice(0, limit);
 
-    // ──────────────────────────────────────────────────────────────
-    // POPULATE COMMENT AUTHORS WITH ONLINE STATUS (Option B implementation)
-    // ──────────────────────────────────────────────────────────────
-    
-    // 1. Gather all comment pseudonyms across normal posts and reposts safely
+    // Populate comment authors with online status
     const pseudonyms = new Set();
-    allItems.forEach(item => {
+    allItems.forEach((item) => {
       if (!item.isRepostItem && item.comments?.length) {
-        item.comments.forEach(c => { if (c.pseudonym) pseudonyms.add(c.pseudonym); });
+        item.comments.forEach((c) => {
+          if (c.pseudonym) pseudonyms.add(c.pseudonym);
+        });
       } else if (item.isRepostItem && item.originalPost?.comments?.length) {
-        item.originalPost.comments.forEach(c => { if (c.pseudonym) pseudonyms.add(c.pseudonym); });
+        item.originalPost.comments.forEach((c) => {
+          if (c.pseudonym) pseudonyms.add(c.pseudonym);
+        });
       }
     });
 
     if (pseudonyms.size > 0) {
-      // 2. Fetch required fields from User model in one batch
       const commentAuthors = await User.find({
-        pseudonym: { $in: Array.from(pseudonyms) }
+        pseudonym: { $in: Array.from(pseudonyms) },
       }).select("pseudonym showOnlineStatus lastSeen");
 
-      // 3. Map out records for quick O(1) lookups
       const authorMap = {};
-      commentAuthors.forEach(a => { authorMap[a.pseudonym] = a; });
+      commentAuthors.forEach((a) => {
+        authorMap[a.pseudonym] = a;
+      });
 
-      // 4. Update elements inside allItems
-      allItems.forEach(item => {
-        // Handle normal items
+      allItems.forEach((item) => {
         if (!item.isRepostItem && item.comments?.length) {
-          item.comments = item.comments.map(c => ({
+          item.comments = item.comments.map((c) => ({
             ...c,
             showOnlineStatus: authorMap[c.pseudonym]?.showOnlineStatus || false,
             lastSeen: authorMap[c.pseudonym]?.lastSeen || null,
           }));
         }
-        // Handle embedded repost items
         if (item.isRepostItem && item.originalPost?.comments?.length) {
-          item.originalPost.comments = item.originalPost.comments.map(c => ({
+          item.originalPost.comments = item.originalPost.comments.map((c) => ({
             ...c,
             showOnlineStatus: authorMap[c.pseudonym]?.showOnlineStatus || false,
             lastSeen: authorMap[c.pseudonym]?.lastSeen || null,
@@ -225,8 +237,7 @@ exports.getFeed = async (req, res) => {
   }
 };
 
-
-// NEW: @route GET /api/posts/hashtag/:tag
+// @route GET /api/posts/hashtag/:tag
 exports.getPostsByHashtag = async (req, res) => {
   try {
     let tag = req.params.tag.toLowerCase();
@@ -240,37 +251,33 @@ exports.getPostsByHashtag = async (req, res) => {
     if (lastId) query._id = { $lt: lastId };
 
     const posts = await Post.find(query)
-     .sort({ createdAt: -1 })
-     .limit(limit)
-     .select("-author");
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .select("-author");
 
     const postsWithReactions = posts.map((post) => {
       const obj = post.toObject();
-      const reactions = Array.isArray(obj.reactions)? obj.reactions : [];
-      
+      const reactions = Array.isArray(obj.reactions) ? obj.reactions : [];
       const reactionCounts = {};
       reactions.forEach((r) => {
         if (r.type) reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1;
       });
-
-      const userReactionObj = reactions.find(r => r.user && r.user.toString() === userId);
-
+      const userReactionObj = reactions.find(
+        (r) => r.user && r.user.toString() === userId
+      );
       return {
-        ...obj, 
-        reactions, 
-        reactionCounts, 
+        ...obj,
+        reactions,
+        reactionCounts,
         totalReactions: reactions.length,
         authorId: obj.author?.toString(),
         userReaction: userReactionObj?.type || null,
-        hasReacted:!!userReactionObj,
+        hasReacted: !!userReactionObj,
+        allowReposts: obj.allowReposts !== false,
       };
     });
 
-    return res.json({
-      posts: postsWithReactions,
-      tag,
-      count: postsWithReactions.length,
-    });
+    return res.json({ posts: postsWithReactions, tag, count: postsWithReactions.length });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
@@ -282,7 +289,7 @@ exports.reactToPost = async (req, res) => {
     const { type } = req.body;
     const validTypes = ["care", "heart", "hug", "strong", "cry", "hope"];
 
-    if (!type ||!validTypes.includes(type)) {
+    if (!type || !validTypes.includes(type)) {
       return res.status(400).json({ message: "Invalid reaction type" });
     }
 
@@ -297,9 +304,11 @@ exports.reactToPost = async (req, res) => {
     if (!Array.isArray(post.reactions)) post.reactions = [];
 
     const userId = req.user._id.toString();
-    const existingIndex = post.reactions.findIndex(r => r.user && r.user.toString() === userId);
+    const existingIndex = post.reactions.findIndex(
+      (r) => r.user && r.user.toString() === userId
+    );
 
-    if (existingIndex!== -1) {
+    if (existingIndex !== -1) {
       if (post.reactions[existingIndex].type === type) {
         post.reactions.splice(existingIndex, 1);
       } else {
@@ -311,51 +320,59 @@ exports.reactToPost = async (req, res) => {
 
     await post.save({ validateBeforeSave: false });
 
-    // Create notification for post author
-try {
-  const freshPost = await Post.findById(req.params.id).select("author pseudonym content");
-  if (freshPost && freshPost.author.toString() !== req.user._id.toString()) {
-    await Notification.deleteOne({
-      recipient: freshPost.author,
-      sender: req.user._id,
-      post: req.params.id,
-      type: "reaction",
-    });
-
-    if (existingIndex === -1 || post.reactions.find(r => r.user && r.user.toString() === userId)) {
-      const newReaction = post.reactions.find(r => r.user && r.user.toString() === userId);
-      if (newReaction) {
-        await Notification.create({
+    // Notification always goes to original post author
+    try {
+      const freshPost = await Post.findById(req.params.id).select(
+        "author pseudonym content"
+      );
+      if (
+        freshPost &&
+        freshPost.author.toString() !== req.user._id.toString()
+      ) {
+        await Notification.deleteOne({
           recipient: freshPost.author,
           sender: req.user._id,
-          senderPseudonym: req.user.pseudonym,
-          type: "reaction",
           post: req.params.id,
-          postPreview: freshPost.content?.substring(0, 60),
-          reactionType: newReaction.type,
+          type: "reaction",
         });
 
-        await sendPushNotification(freshPost.author, {
-          title: `${req.user.pseudonym} reacted to your post`,
-          body: newReaction.type,
-          data: { 
-            screen: "Feed", 
-            postId: req.params.id.toString(),
-            type: "reaction"
-          }
-        });
+        const newReaction = post.reactions.find(
+          (r) => r.user && r.user.toString() === userId
+        );
+        if (newReaction) {
+          await Notification.create({
+            recipient: freshPost.author,
+            sender: req.user._id,
+            senderPseudonym: req.user.pseudonym,
+            type: "reaction",
+            post: req.params.id,
+            postPreview: freshPost.content?.substring(0, 60),
+            reactionType: newReaction.type,
+          });
+
+          await sendPushNotification(freshPost.author, {
+            title: `${req.user.pseudonym} reacted to your post`,
+            body: newReaction.type,
+            data: {
+              screen: "Feed",
+              postId: req.params.id.toString(),
+              type: "reaction",
+            },
+          });
+        }
       }
+    } catch (e) {
+      console.log("Notification error:", e.message);
     }
-  }
-} catch (e) {
-  console.log("Notification error:", e.message);
-}
+
     const reactionCounts = {};
     post.reactions.forEach((r) => {
       if (r.type) reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1;
     });
 
-    const userReaction = post.reactions.find(r => r.user && r.user.toString() === userId);
+    const userReaction = post.reactions.find(
+      (r) => r.user && r.user.toString() === userId
+    );
 
     const payload = {
       postId: req.params.id,
@@ -368,10 +385,7 @@ try {
       req.io.to(`post:${req.params.id}`).emit("reaction_updated", payload);
     }
 
-    return res.json({
-      message: "Reaction updated 💜",
-     ...payload
-    });
+    return res.json({ message: "Reaction updated 💜", ...payload });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
@@ -383,10 +397,11 @@ exports.addComment = async (req, res) => {
     const { text } = req.body;
     if (!text) return res.status(400).json({ message: "Comment text is required" });
 
-    const { analyzeContent } = require("../middleware/contentModerator");
     const modResult = await analyzeContent(text);
     if (modResult.autoReject) {
-      return res.status(400).json({ message: "Comment violates community guidelines." });
+      return res
+        .status(400)
+        .json({ message: "Comment violates community guidelines." });
     }
 
     const post = await Post.findById(req.params.id);
@@ -423,10 +438,8 @@ exports.addComment = async (req, res) => {
       req.io.to(`post:${req.params.id}`).emit("comment_added", payload);
     }
 
-    // Notify post author
     try {
       if (post.author.toString() !== req.user._id.toString()) {
-        const Notification = require("../models/Notification");
         await Notification.create({
           recipient: post.author,
           sender: req.user._id,
@@ -437,7 +450,6 @@ exports.addComment = async (req, res) => {
           commentText: text.substring(0, 100),
         });
 
-        const { sendPushNotification } = require("../utils/sendPush");
         await sendPushNotification(post.author, {
           title: `${req.user.pseudonym} commented on your post`,
           body: text.substring(0, 80),
@@ -464,10 +476,11 @@ exports.addReply = async (req, res) => {
     const { text, replyingTo } = req.body;
     if (!text) return res.status(400).json({ message: "Reply text is required" });
 
-    const { analyzeContent } = require("../middleware/contentModerator");
     const modResult = await analyzeContent(text);
     if (modResult.autoReject) {
-      return res.status(400).json({ message: "Reply violates community guidelines." });
+      return res
+        .status(400)
+        .json({ message: "Reply violates community guidelines." });
     }
 
     const post = await Post.findById(req.params.id);
@@ -492,7 +505,6 @@ exports.addReply = async (req, res) => {
     });
 
     post.commentCount = (post.commentCount || 0) + 1;
-
     await post.save({ validateBeforeSave: false });
 
     const newReply = comment.replies[comment.replies.length - 1];
@@ -508,10 +520,8 @@ exports.addReply = async (req, res) => {
       req.io.to(`post:${req.params.id}`).emit("reply_added", payload);
     }
 
-    // Notify comment author
     try {
       if (comment.author.toString() !== req.user._id.toString()) {
-        const Notification = require("../models/Notification");
         await Notification.create({
           recipient: comment.author,
           sender: req.user._id,
@@ -522,7 +532,6 @@ exports.addReply = async (req, res) => {
           commentText: text.substring(0, 80),
         });
 
-        const { sendPushNotification } = require("../utils/sendPush");
         await sendPushNotification(comment.author, {
           title: `${req.user.pseudonym} replied to your comment`,
           body: text.substring(0, 80),
@@ -549,20 +558,21 @@ exports.editPost = async (req, res) => {
     const { content, mood } = req.body;
     const post = await Post.findById(req.params.id);
     if (!post) return res.status(404).json({ message: "Post not found" });
-    if (post.author.toString()!== req.user._id.toString()) {
+    if (post.author.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: "Not allowed to edit this post" });
     }
     if (content) {
       const modResult = await analyzeContent(content);
       if (modResult.autoReject) {
-        return res.status(400).json({ message: "Edited content violates community guidelines." });
+        return res
+          .status(400)
+          .json({ message: "Edited content violates community guidelines." });
       }
       post.content = content;
-      // Re-extract hashtags on edit
       const extracted = (content.match(/#\w+/g) || [])
-       .map((t) => t.toLowerCase())
-       .filter((t) => t.length <= 32)
-       .slice(0, 5);
+        .map((t) => t.toLowerCase())
+        .filter((t) => t.length <= 32)
+        .slice(0, 5);
       post.hashtags = [...new Set(extracted)];
     }
     if (mood) post.mood = mood;
@@ -578,10 +588,12 @@ exports.deletePost = async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
     if (!post) return res.status(404).json({ message: "Post not found" });
-    if (post.author.toString()!== req.user._id.toString()) {
+    if (post.author.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: "Not allowed to delete this post" });
     }
     await post.deleteOne();
+    // Cascade-delete all reposts of this post
+    await Repost.deleteMany({ originalPost: req.params.id });
     return res.json({ message: "Post deleted" });
   } catch (error) {
     return res.status(500).json({ message: error.message });
@@ -592,14 +604,27 @@ exports.deletePost = async (req, res) => {
 exports.reportPost = async (req, res) => {
   try {
     const { reason, details } = req.body;
-    const validReasons = ["harmful_content", "spam", "inappropriate", "bullying", "misinformation", "other"];
-    if (!reason ||!validReasons.includes(reason)) {
+    const validReasons = [
+      "harmful_content",
+      "spam",
+      "inappropriate",
+      "bullying",
+      "misinformation",
+      "other",
+    ];
+    if (!reason || !validReasons.includes(reason)) {
       return res.status(400).json({ message: "Valid reason is required" });
     }
     const post = await Post.findById(req.params.id);
     if (!post) return res.status(404).json({ message: "Post not found" });
-    const existing = await Report.findOne({ post: req.params.id, reportedBy: req.user._id });
-    if (existing) return res.status(400).json({ message: "You have already reported this post" });
+    const existing = await Report.findOne({
+      post: req.params.id,
+      reportedBy: req.user._id,
+    });
+    if (existing)
+      return res
+        .status(400)
+        .json({ message: "You have already reported this post" });
     const modResult = await analyzeContent(post.content);
     const report = await Report.create({
       post: req.params.id,
@@ -611,11 +636,20 @@ exports.reportPost = async (req, res) => {
       postContent: post.content,
       postPseudonym: post.pseudonym,
     });
-    const reportCount = await Report.countDocuments({ post: req.params.id, status: "pending" });
+    const reportCount = await Report.countDocuments({
+      post: req.params.id,
+      status: "pending",
+    });
     if (reportCount >= 3) {
-      await Post.findByIdAndUpdate(req.params.id, { flagged: true, flagType: "community_reports" });
+      await Post.findByIdAndUpdate(req.params.id, {
+        flagged: true,
+        flagType: "community_reports",
+      });
     }
-    return res.status(201).json({ message: "Thank you for keeping HushCircle safe 💜", reportId: report._id });
+    return res.status(201).json({
+      message: "Thank you for keeping HushCircle safe 💜",
+      reportId: report._id,
+    });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
@@ -632,19 +666,25 @@ exports.savePost = async (req, res) => {
     if (alreadySaved) user.savedPosts.pull(postId);
     else user.savedPosts.push(postId);
     await user.save({ validateBeforeSave: false });
-    return res.json({ message: alreadySaved? "Post removed from saved" : "Post saved 💜", saved:!alreadySaved });
+    return res.json({
+      message: alreadySaved ? "Post removed from saved" : "Post saved 💜",
+      saved: !alreadySaved,
+    });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
 };
 
+// @route GET /api/posts/search
 exports.searchPosts = async (req, res) => {
   try {
     const { q, mood, author } = req.query;
     const userId = req.user._id.toString();
 
     if (!q || q.trim().length < 2) {
-      return res.status(400).json({ message: "Search query must be at least 2 characters" });
+      return res
+        .status(400)
+        .json({ message: "Search query must be at least 2 characters" });
     }
 
     const query = {
@@ -655,9 +695,7 @@ exports.searchPosts = async (req, res) => {
       ],
     };
 
-    if (mood && mood !== "all") {
-      query.mood = mood;
-    }
+    if (mood && mood !== "all") query.mood = mood;
 
     if (author) {
       query.pseudonym = { $regex: `^${author.trim()}$`, $options: "i" };
@@ -672,14 +710,13 @@ exports.searchPosts = async (req, res) => {
     const postsWithReactions = posts.map((post) => {
       const obj = post.toObject();
       const reactions = Array.isArray(obj.reactions) ? obj.reactions : [];
-      
       const reactionCounts = {};
       reactions.forEach((r) => {
         if (r.type) reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1;
       });
-
-      const userReactionObj = reactions.find(r => r.user && r.user.toString() === userId);
-
+      const userReactionObj = reactions.find(
+        (r) => r.user && r.user.toString() === userId
+      );
       return {
         ...obj,
         reactions,
@@ -687,7 +724,8 @@ exports.searchPosts = async (req, res) => {
         totalReactions: reactions.length,
         authorId: obj.author?.toString(),
         userReaction: userReactionObj?.type || null,
-        hasReacted:!!userReactionObj,
+        hasReacted: !!userReactionObj,
+        allowReposts: obj.allowReposts !== false,
       };
     });
 
@@ -697,16 +735,17 @@ exports.searchPosts = async (req, res) => {
   }
 };
 
-
 // @route PUT /api/posts/:id/comments/:commentId
 exports.editComment = async (req, res) => {
   try {
     const { text } = req.body;
     if (!text?.trim()) return res.status(400).json({ message: "Text is required" });
 
-    const { analyzeContent } = require("../middleware/contentModerator");
     const mod = await analyzeContent(text);
-    if (mod.autoReject) return res.status(400).json({ message: "Comment violates community guidelines." });
+    if (mod.autoReject)
+      return res
+        .status(400)
+        .json({ message: "Comment violates community guidelines." });
 
     const post = await Post.findById(req.params.id);
     if (!post) return res.status(404).json({ message: "Post not found" });
@@ -715,7 +754,9 @@ exports.editComment = async (req, res) => {
     if (!comment) return res.status(404).json({ message: "Comment not found" });
 
     if (comment.author.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: "Not authorized to edit this comment" });
+      return res
+        .status(403)
+        .json({ message: "Not authorized to edit this comment" });
     }
 
     comment.text = text.trim();
@@ -737,7 +778,6 @@ exports.editComment = async (req, res) => {
   }
 };
 
-
 // @route DELETE /api/posts/:id/comments/:commentId
 exports.deleteComment = async (req, res) => {
   try {
@@ -747,11 +787,14 @@ exports.deleteComment = async (req, res) => {
     const comment = post.comments.id(req.params.commentId);
     if (!comment) return res.status(404).json({ message: "Comment not found" });
 
-    const isCommentAuthor = comment.author.toString() === req.user._id.toString();
+    const isCommentAuthor =
+      comment.author.toString() === req.user._id.toString();
     const isPostAuthor = post.author.toString() === req.user._id.toString();
 
     if (!isCommentAuthor && !isPostAuthor) {
-      return res.status(403).json({ message: "Not authorized to delete this comment" });
+      return res
+        .status(403)
+        .json({ message: "Not authorized to delete this comment" });
     }
 
     const activeReplies = comment.replies.filter((r) => !r.deleted).length;
@@ -770,7 +813,6 @@ exports.deleteComment = async (req, res) => {
     }
 
     post.commentCount = Math.max(0, (post.commentCount || 0) - countToRemove);
-
     await post.save({ validateBeforeSave: false });
 
     if (req.io) {
@@ -781,15 +823,11 @@ exports.deleteComment = async (req, res) => {
       });
     }
 
-    return res.json({
-      message: "Comment deleted 💜",
-      commentCount: post.commentCount,
-    });
+    return res.json({ message: "Comment deleted 💜", commentCount: post.commentCount });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
 };
-
 
 // @route PUT /api/posts/:id/comments/:commentId/replies/:replyId
 exports.editReply = async (req, res) => {
@@ -797,9 +835,11 @@ exports.editReply = async (req, res) => {
     const { text } = req.body;
     if (!text?.trim()) return res.status(400).json({ message: "Text is required" });
 
-    const { analyzeContent } = require("../middleware/contentModerator");
     const mod = await analyzeContent(text);
-    if (mod.autoReject) return res.status(400).json({ message: "Reply violates community guidelines." });
+    if (mod.autoReject)
+      return res
+        .status(400)
+        .json({ message: "Reply violates community guidelines." });
 
     const post = await Post.findById(req.params.id);
     if (!post) return res.status(404).json({ message: "Post not found" });
@@ -811,7 +851,9 @@ exports.editReply = async (req, res) => {
     if (!reply) return res.status(404).json({ message: "Reply not found" });
 
     if (reply.author.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: "Not authorized to edit this reply" });
+      return res
+        .status(403)
+        .json({ message: "Not authorized to edit this reply" });
     }
 
     reply.text = text.trim();
@@ -834,7 +876,6 @@ exports.editReply = async (req, res) => {
   }
 };
 
-
 // @route DELETE /api/posts/:id/comments/:commentId/replies/:replyId
 exports.deleteReply = async (req, res) => {
   try {
@@ -851,7 +892,9 @@ exports.deleteReply = async (req, res) => {
     const isPostAuthor = post.author.toString() === req.user._id.toString();
 
     if (!isReplyAuthor && !isPostAuthor) {
-      return res.status(403).json({ message: "Not authorized to delete this reply" });
+      return res
+        .status(403)
+        .json({ message: "Not authorized to delete this reply" });
     }
 
     reply.text = "This reply was deleted.";
@@ -859,7 +902,6 @@ exports.deleteReply = async (req, res) => {
     reply.deletedAt = new Date();
 
     post.commentCount = Math.max(0, (post.commentCount || 0) - 1);
-
     await post.save({ validateBeforeSave: false });
 
     if (req.io) {
@@ -871,50 +913,81 @@ exports.deleteReply = async (req, res) => {
       });
     }
 
-    return res.json({
-      message: "Reply deleted 💜",
-      commentCount: post.commentCount,
-    });
+    return res.json({ message: "Reply deleted 💜", commentCount: post.commentCount });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
 };
 
-// ─────────────────────────────────────────────
-// REPOST CONTROLLERS — NEW
-// ─────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// REPOST CONTROLLERS
+// ─────────────────────────────────────────────────────────────────────────────
 
 // @route POST /api/posts/:id/repost
+// Body: { thought?: string, confirmed: true }
+// confirmed: true is required — the frontend must show a confirmation overlay first.
 exports.createRepost = async (req, res) => {
   try {
-    const { thought } = req.body;
+    const { thought, confirmed } = req.body;
     const postId = req.params.id;
+
+    // Require explicit confirmation from the frontend overlay
+    if (!confirmed) {
+      return res.status(400).json({
+        message: "Please confirm before reposting.",
+        requiresConfirmation: true,
+      });
+    }
 
     const post = await Post.findById(postId);
     if (!post) return res.status(404).json({ message: "Post not found" });
 
-    // Prevent self-repost
-    if (post.author.toString() === req.user._id.toString()) {
-      return res.status(400).json({ message: "You cannot repost your own post" });
+    // Privacy guard: creator disabled reposts
+    if (post.allowReposts === false) {
+      return res.status(403).json({
+        message: "The creator has disabled reposts for this story.",
+      });
     }
 
-    // Check for duplicate
-    const existing = await Repost.findOne({ user: req.user._id, originalPost: postId });
+    // No self-repost
+    if (post.author.toString() === req.user._id.toString()) {
+      return res
+        .status(400)
+        .json({ message: "You cannot repost your own post" });
+    }
+
+    // No repost-of-repost: if this post's _id is actually a Repost's originalPost
+    // we allow it (it IS the original). But we block if the user is trying to repost
+    // something that was itself created as a repost of another original.
+    // Since we only store original Posts in originalPost field, and we always
+    // link to the root Post, this is enforced by always redirecting reposts to
+    // the original. If someone taps "repost" on a repost card in the feed, the
+    // frontend passes originalPost._id, so this is already handled on the client.
+    // As an extra server guard, check if this postId is someone else's repost target
+    // that originated from a different post — not applicable here since each Repost
+    // points at the original Post document. No further action needed.
+
+    // Duplicate guard
+    const existing = await Repost.findOne({
+      user: req.user._id,
+      originalPost: postId,
+    });
     if (existing) {
-      return res.status(400).json({ message: "You have already reposted this" });
+      return res
+        .status(400)
+        .json({ message: "You have already reposted this" });
     }
 
     const repost = await Repost.create({
       user: req.user._id,
       originalPost: postId,
+      originalAuthor: post.author,
       thought: thought?.trim() || "",
       pseudonym: req.user.pseudonym,
     });
 
-    // Increment repostCount on original post
     await Post.findByIdAndUpdate(postId, { $inc: { repostCount: 1 } });
 
-    // Notify original post author
     try {
       await Notification.create({
         recipient: post.author,
@@ -927,8 +1000,14 @@ exports.createRepost = async (req, res) => {
 
       await sendPushNotification(post.author, {
         title: `${req.user.pseudonym} reposted your story`,
-        body: thought?.trim() ? `"${thought.trim().substring(0, 60)}"` : "Your story is being shared 💜",
-        data: { screen: "Feed", postId: postId.toString(), type: "repost" },
+        body: thought?.trim()
+          ? `"${thought.trim().substring(0, 60)}"`
+          : "Your story is being shared 💜",
+        data: {
+          screen: "Feed",
+          postId: postId.toString(),
+          type: "repost",
+        },
       });
     } catch (e) {
       console.log("Repost notification error:", e.message);
@@ -952,12 +1031,13 @@ exports.deleteRepost = async (req, res) => {
   try {
     const postId = req.params.id;
 
-    const repost = await Repost.findOne({ user: req.user._id, originalPost: postId });
+    const repost = await Repost.findOne({
+      user: req.user._id,
+      originalPost: postId,
+    });
     if (!repost) return res.status(404).json({ message: "Repost not found" });
 
     await repost.deleteOne();
-
-    // Decrement repostCount
     await Post.findByIdAndUpdate(postId, { $inc: { repostCount: -1 } });
 
     const updated = await Post.findById(postId).select("repostCount");
@@ -979,6 +1059,152 @@ exports.getReposts = async (req, res) => {
       .limit(20)
       .lean();
     return res.json({ reposts });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REPOST SECONDARY COMMENT STREAM
+// Comments on a resharer's repost — go to the resharer, not the original author.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// @route POST /api/reposts/:repostId/comments
+exports.addRepostComment = async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (!text?.trim())
+      return res.status(400).json({ message: "Comment text is required" });
+
+    const mod = await analyzeContent(text);
+    if (mod.autoReject)
+      return res
+        .status(400)
+        .json({ message: "Comment violates community guidelines." });
+
+    const repost = await Repost.findById(req.params.repostId);
+    if (!repost) return res.status(404).json({ message: "Repost not found" });
+
+    repost.repostComments.push({
+      author: req.user._id,
+      pseudonym: req.user.pseudonym,
+      text: text.trim(),
+    });
+    repost.repostCommentCount = (repost.repostCommentCount || 0) + 1;
+    await repost.save({ validateBeforeSave: false });
+
+    const newComment = repost.repostComments[repost.repostComments.length - 1];
+
+    // Notify the resharer (not the original author)
+    try {
+      if (repost.user.toString() !== req.user._id.toString()) {
+        await Notification.create({
+          recipient: repost.user,
+          sender: req.user._id,
+          senderPseudonym: req.user.pseudonym,
+          type: "repost_comment",
+          post: repost.originalPost,
+          commentText: text.substring(0, 100),
+        });
+
+        await sendPushNotification(repost.user, {
+          title: `${req.user.pseudonym} commented on your repost`,
+          body: text.substring(0, 80),
+          data: {
+            screen: "Feed",
+            repostId: repost._id.toString(),
+            type: "repost_comment",
+          },
+        });
+      }
+    } catch (e) {
+      console.log("Repost comment notification error:", e.message);
+    }
+
+    if (req.io) {
+      req.io
+        .to(`repost:${req.params.repostId}`)
+        .emit("repost_comment_added", {
+          repostId: req.params.repostId,
+          comment: newComment.toObject(),
+          repostCommentCount: repost.repostCommentCount,
+        });
+    }
+
+    return res.status(201).json({
+      message: "Comment added 💜",
+      comment: newComment,
+      repostCommentCount: repost.repostCommentCount,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+// @route DELETE /api/reposts/:repostId/comments/:commentId
+exports.deleteRepostComment = async (req, res) => {
+  try {
+    const repost = await Repost.findById(req.params.repostId);
+    if (!repost) return res.status(404).json({ message: "Repost not found" });
+
+    const comment = repost.repostComments.id(req.params.commentId);
+    if (!comment) return res.status(404).json({ message: "Comment not found" });
+
+    const isCommentAuthor =
+      comment.author.toString() === req.user._id.toString();
+    const isRepostAuthor = repost.user.toString() === req.user._id.toString();
+
+    if (!isCommentAuthor && !isRepostAuthor) {
+      return res
+        .status(403)
+        .json({ message: "Not authorized to delete this comment" });
+    }
+
+    comment.text = "This comment was deleted.";
+    comment.deleted = true;
+    comment.deletedAt = new Date();
+
+    repost.repostCommentCount = Math.max(
+      0,
+      (repost.repostCommentCount || 0) - 1
+    );
+    await repost.save({ validateBeforeSave: false });
+
+    return res.json({
+      message: "Comment deleted 💜",
+      repostCommentCount: repost.repostCommentCount,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+// @route PATCH /api/posts/:id/allow-reposts
+// Body: { allowReposts: boolean }
+// Lets a post author toggle whether others can repost their content.
+exports.toggleAllowReposts = async (req, res) => {
+  try {
+    const { allowReposts } = req.body;
+    if (typeof allowReposts !== "boolean") {
+      return res.status(400).json({ message: "allowReposts must be a boolean" });
+    }
+
+    const post = await Post.findById(req.params.id);
+    if (!post) return res.status(404).json({ message: "Post not found" });
+
+    if (post.author.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: "Not authorized" });
+    }
+
+    post.allowReposts = allowReposts;
+    await post.save({ validateBeforeSave: false });
+
+    return res.json({
+      message: allowReposts
+        ? "Reposts enabled for this post 💜"
+        : "Reposts disabled for this post",
+      allowReposts,
+    });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }

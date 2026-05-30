@@ -13,9 +13,7 @@ router.get("/:id", protect, async (req, res) => {
     const post = await Post.findById(req.params.id)
       .populate("author", "pseudonym")
       .lean();
-    
     if (!post) return res.status(404).json({ message: "Post not found" });
-    
     res.json({ post });
   } catch (e) {
     res.status(500).json({ message: e.message });
@@ -34,9 +32,20 @@ router.delete("/:id/comments/:commentId", protect, postController.deleteComment)
 router.put("/:id/comments/:commentId/replies/:replyId", protect, postController.editReply);
 router.delete("/:id/comments/:commentId/replies/:replyId", protect, postController.deleteReply);
 
-// ── Repost routes ────────────────────────────────────────────
+// ── Repost routes ─────────────────────────────────────────────────────────
 router.post("/:id/repost", protect, postController.createRepost);
 router.delete("/:id/repost", protect, postController.deleteRepost);
 router.get("/:id/reposts", protect, postController.getReposts);
 
+// ── NEW: Creator toggles repost permission on their own post ──────────────
+router.patch("/:id/allow-reposts", protect, postController.toggleAllowReposts);
+
+// ── NEW: Secondary comment stream — mounted separately at /api/reposts ────
+// A dedicated router avoids the /:id wildcard above swallowing "reposts".
+// In server.js:  app.use("/api/reposts", require("./routes/postRoutes").repostRouter);
+const repostRouter = express.Router();
+repostRouter.post("/:repostId/comments", protect, postController.addRepostComment);
+repostRouter.delete("/:repostId/comments/:commentId", protect, postController.deleteRepostComment);
+
 module.exports = router;
+module.exports.repostRouter = repostRouter;
