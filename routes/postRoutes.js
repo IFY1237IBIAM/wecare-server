@@ -44,8 +44,9 @@ router.patch("/:id/allow-reposts", protect, postController.toggleAllowReposts);
 // A dedicated router avoids the /:id wildcard above swallowing "reposts".
 // In server.js:  app.use("/api/reposts", require("./routes/postRoutes").repostRouter);
 const repostRouter = express.Router();
-repostRouter.post("/:repostId/comments", protect, postController.addRepostComment);
-repostRouter.delete("/:repostId/comments/:commentId", protect, postController.deleteRepostComment);
+repostRouter.post("/:repostId/comments",                      protect, postController.addRepostComment);
+repostRouter.put("/:repostId/comments/:commentId",             protect, postController.editRepostComment);
+repostRouter.delete("/:repostId/comments/:commentId",          protect, postController.deleteRepostComment);
 
 module.exports = router;
 module.exports.repostRouter = repostRouter;

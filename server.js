@@ -80,6 +80,9 @@ io.on("connection", (socket) => {
   });
 
   // ── NEW: let clients subscribe to a repost's secondary comment stream ──
+  // Events emitted to repost:{id} rooms:
+  //   repost_comment_added   — new comment
+  //   repost_comment_updated — edited comment
   socket.on("join_repost", (repostId) => {
     if (!repostId) return;
     socket.join(`repost:${repostId}`);

@@ -1141,6 +1141,46 @@ exports.addRepostComment = async (req, res) => {
   }
 };
 
+// @route PUT /api/reposts/:repostId/comments/:commentId
+exports.editRepostComment = async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (!text?.trim())
+      return res.status(400).json({ message: "Text is required" });
+
+    const mod = await analyzeContent(text);
+    if (mod.autoReject)
+      return res.status(400).json({ message: "Comment violates community guidelines." });
+
+    const repost = await Repost.findById(req.params.repostId);
+    if (!repost) return res.status(404).json({ message: "Repost not found" });
+
+    const comment = repost.repostComments.id(req.params.commentId);
+    if (!comment) return res.status(404).json({ message: "Comment not found" });
+
+    if (comment.author.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: "Not authorized to edit this comment" });
+    }
+
+    comment.text = text.trim();
+    comment.edited = true;
+    await repost.save({ validateBeforeSave: false });
+
+    if (req.io) {
+      req.io.to(`repost:${req.params.repostId}`).emit("repost_comment_updated", {
+        repostId: req.params.repostId,
+        commentId: req.params.commentId,
+        text: comment.text,
+        edited: true,
+      });
+    }
+
+    return res.json({ message: "Comment updated 💜", comment });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
 // @route DELETE /api/reposts/:repostId/comments/:commentId
 exports.deleteRepostComment = async (req, res) => {
   try {
