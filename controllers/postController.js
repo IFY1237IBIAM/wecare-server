@@ -70,6 +70,7 @@ exports.createPost = async (req, res) => {
 };
 
 // @route GET /api/posts
+// @route GET /api/posts
 exports.getFeed = async (req, res) => {
   try {
     const User = require("../models/User");
@@ -110,14 +111,11 @@ exports.getFeed = async (req, res) => {
 
     const postsWithReactions = posts.map((post) => {
       const reactions = Array.isArray(post.reactions) ? post.reactions : [];
-
       const reactionCounts = {};
       reactions.forEach((r) => {
         if (r.type) reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1;
       });
-
       const userReactionObj = reactions.find(r => r.user && r.user.toString() === userId.toString());
-
       return {
         ...post,
         reactions,
@@ -143,7 +141,6 @@ exports.getFeed = async (req, res) => {
           if (rx.type) reactionCounts[rx.type] = (reactionCounts[rx.type] || 0) + 1;
         });
         const userReactionObj = reactions.find(rx => rx.user && rx.user.toString() === userId.toString());
-
         return {
           // Repost wrapper fields
           _id: r._id.toString(),
@@ -176,6 +173,51 @@ exports.getFeed = async (req, res) => {
       const dateB = new Date(b.isRepostItem ? b.repostCreatedAt : b.createdAt);
       return dateB - dateA;
     }).slice(0, limit);
+
+    // ──────────────────────────────────────────────────────────────
+    // POPULATE COMMENT AUTHORS WITH ONLINE STATUS (Option B implementation)
+    // ──────────────────────────────────────────────────────────────
+    
+    // 1. Gather all comment pseudonyms across normal posts and reposts safely
+    const pseudonyms = new Set();
+    allItems.forEach(item => {
+      if (!item.isRepostItem && item.comments?.length) {
+        item.comments.forEach(c => { if (c.pseudonym) pseudonyms.add(c.pseudonym); });
+      } else if (item.isRepostItem && item.originalPost?.comments?.length) {
+        item.originalPost.comments.forEach(c => { if (c.pseudonym) pseudonyms.add(c.pseudonym); });
+      }
+    });
+
+    if (pseudonyms.size > 0) {
+      // 2. Fetch required fields from User model in one batch
+      const commentAuthors = await User.find({
+        pseudonym: { $in: Array.from(pseudonyms) }
+      }).select("pseudonym showOnlineStatus lastSeen");
+
+      // 3. Map out records for quick O(1) lookups
+      const authorMap = {};
+      commentAuthors.forEach(a => { authorMap[a.pseudonym] = a; });
+
+      // 4. Update elements inside allItems
+      allItems.forEach(item => {
+        // Handle normal items
+        if (!item.isRepostItem && item.comments?.length) {
+          item.comments = item.comments.map(c => ({
+            ...c,
+            showOnlineStatus: authorMap[c.pseudonym]?.showOnlineStatus || false,
+            lastSeen: authorMap[c.pseudonym]?.lastSeen || null,
+          }));
+        }
+        // Handle embedded repost items
+        if (item.isRepostItem && item.originalPost?.comments?.length) {
+          item.originalPost.comments = item.originalPost.comments.map(c => ({
+            ...c,
+            showOnlineStatus: authorMap[c.pseudonym]?.showOnlineStatus || false,
+            lastSeen: authorMap[c.pseudonym]?.lastSeen || null,
+          }));
+        }
+      });
+    }
 
     return res.json({ posts: allItems });
   } catch (error) {
