@@ -1,3 +1,5 @@
+const mongoose = require("mongoose");  // ← this line is missing
+
 const notificationSchema = new mongoose.Schema(
   {
     recipient: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
@@ -12,7 +14,7 @@ const notificationSchema = new mongoose.Schema(
     postPreview: { type: String },
     reactionType: { type: String },
     commentText: { type: String },
-    repostThought: { type: String },   // ← add here
+    repostThought: { type: String },
     adminMessage: { type: String },
     adminReason: { type: String },
     nextStep: { type: String },
@@ -23,3 +25,7 @@ const notificationSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+notificationSchema.index({ recipient: 1, createdAt: -1 });
+
+module.exports = mongoose.model("Notification", notificationSchema);
