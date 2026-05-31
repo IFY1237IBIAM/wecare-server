@@ -89,6 +89,7 @@ exports.getFeed = async (req, res) => {
     const userReposts = await Repost.find({ user: userId })
       .select("originalPost")
       .lean();
+
     const repostedSet = new Set(
       userReposts.map((r) => r.originalPost.toString())
     );
@@ -101,7 +102,6 @@ exports.getFeed = async (req, res) => {
       .limit(limit)
       .lean();
 
-    // Only include reposts of public / allowReposts posts
     const repostQuery = { user: { $ne: userId } };
     if (lastId) repostQuery._id = { $lt: lastId };
 
@@ -114,12 +114,15 @@ exports.getFeed = async (req, res) => {
     const postsWithReactions = posts.map((post) => {
       const reactions = Array.isArray(post.reactions) ? post.reactions : [];
       const reactionCounts = {};
+
       reactions.forEach((r) => {
         if (r.type) reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1;
       });
+
       const userReactionObj = reactions.find(
         (r) => r.user && r.user.toString() === userId.toString()
       );
+
       return {
         ...post,
         reactions,
@@ -131,31 +134,27 @@ exports.getFeed = async (req, res) => {
         isSaved: savedSet.has(post._id.toString()),
         isReposted: repostedSet.has(post._id.toString()),
         isRepostItem: false,
-        // Expose allowReposts so frontend can hide the button
         allowReposts: post.allowReposts !== false,
       };
     });
 
     const repostItems = reposts
-      .filter((r) => {
-        if (!r.originalPost) return false;
-        // Privacy guard: skip posts where creator disabled reposts
-        if (r.originalPost.allowReposts === false) return false;
-        return true;
-      })
+      .filter((r) => r.originalPost && r.originalPost.allowReposts !== false)
       .map((r) => {
         const original = r.originalPost;
         const reactions = Array.isArray(original.reactions)
           ? original.reactions
           : [];
+
         const reactionCounts = {};
         reactions.forEach((rx) => {
-          if (rx.type)
-            reactionCounts[rx.type] = (reactionCounts[rx.type] || 0) + 1;
+          if (rx.type) reactionCounts[rx.type] = (reactionCounts[rx.type] || 0) + 1;
         });
+
         const userReactionObj = reactions.find(
           (rx) => rx.user && rx.user.toString() === userId.toString()
         );
+
         return {
           _id: r._id.toString(),
           isRepostItem: true,
@@ -163,7 +162,6 @@ exports.getFeed = async (req, res) => {
           reposterPseudonym: r.pseudonym,
           repostThought: r.thought || "",
           repostCreatedAt: r.createdAt,
-          // Resharer's secondary comment stream
           repostComments: r.repostComments || [],
           repostCommentCount: r.repostCommentCount || 0,
           originalPost: {
@@ -189,15 +187,33 @@ exports.getFeed = async (req, res) => {
       })
       .slice(0, limit);
 
-    // Populate comment authors with online status
+    // ─────────────────────────────────────────────
+    // ENHANCED: comment authors + ONLINE STATUS
+    // ─────────────────────────────────────────────
+
     const pseudonyms = new Set();
+
     allItems.forEach((item) => {
       if (!item.isRepostItem && item.comments?.length) {
         item.comments.forEach((c) => {
           if (c.pseudonym) pseudonyms.add(c.pseudonym);
+          (c.replies || []).forEach((r) => {
+            if (r.pseudonym) pseudonyms.add(r.pseudonym);
+          });
         });
-      } else if (item.isRepostItem && item.originalPost?.comments?.length) {
+      }
+
+      if (item.isRepostItem && item.originalPost?.comments?.length) {
         item.originalPost.comments.forEach((c) => {
+          if (c.pseudonym) pseudonyms.add(c.pseudonym);
+          (c.replies || []).forEach((r) => {
+            if (r.pseudonym) pseudonyms.add(r.pseudonym);
+          });
+        });
+      }
+
+      if (item.isRepostItem && item.repostComments?.length) {
+        item.repostComments.forEach((c) => {
           if (c.pseudonym) pseudonyms.add(c.pseudonym);
         });
       }
@@ -206,7 +222,7 @@ exports.getFeed = async (req, res) => {
     if (pseudonyms.size > 0) {
       const commentAuthors = await User.find({
         pseudonym: { $in: Array.from(pseudonyms) },
-      }).select("pseudonym showOnlineStatus lastSeen");
+      }).select("pseudonym showOnlineStatus isOnline lastSeen");
 
       const authorMap = {};
       commentAuthors.forEach((a) => {
@@ -214,19 +230,29 @@ exports.getFeed = async (req, res) => {
       });
 
       allItems.forEach((item) => {
+        const enrich = (c) => ({
+          ...c,
+          showOnlineStatus: authorMap[c.pseudonym]?.showOnlineStatus || false,
+          isOnline: authorMap[c.pseudonym]?.isOnline || false,
+          lastSeen: authorMap[c.pseudonym]?.lastSeen || null,
+        });
+
         if (!item.isRepostItem && item.comments?.length) {
           item.comments = item.comments.map((c) => ({
-            ...c,
-            showOnlineStatus: authorMap[c.pseudonym]?.showOnlineStatus || false,
-            lastSeen: authorMap[c.pseudonym]?.lastSeen || null,
+            ...enrich(c),
+            replies: (c.replies || []).map(enrich),
           }));
         }
+
         if (item.isRepostItem && item.originalPost?.comments?.length) {
           item.originalPost.comments = item.originalPost.comments.map((c) => ({
-            ...c,
-            showOnlineStatus: authorMap[c.pseudonym]?.showOnlineStatus || false,
-            lastSeen: authorMap[c.pseudonym]?.lastSeen || null,
+            ...enrich(c),
+            replies: (c.replies || []).map(enrich),
           }));
+        }
+
+        if (item.isRepostItem && item.repostComments?.length) {
+          item.repostComments = item.repostComments.map(enrich);
         }
       });
     }
