@@ -9,6 +9,11 @@ const groupPostSchema = new mongoose.Schema(
     mood: { type: String, default: "hope" },
     replyTo: { type: mongoose.Schema.Types.ObjectId, ref: "GroupPost", default: null },
     deleted: { type: Boolean, default: false },
+
+    // "self" = author deleted it | "Crown_Keeper" = keeper deleted it
+    deletedBy: { type: String, default: null },
+    deletedByPseudonym: { type: String, default: null },
+
     flagged: { type: Boolean, default: false },
     flagType: { type: String, default: null },
 
