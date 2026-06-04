@@ -11,7 +11,7 @@ const { sendPushNotification } = require("../utils/sendPush");
 const Notification = require("../models/Notification");
 
 const CIRCLE_KEEPER_EMAIL = "mom@gmail.com";
-const EDIT_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
+const EDIT_WINDOW_MS = 5 * 60 * 1000;
 
 // ── Membership middleware ──────────────────────────────────────────────────
 const requireMember = async (req, res, next) => {
@@ -23,7 +23,6 @@ const requireMember = async (req, res, next) => {
     const isMember = group.members.some((m) => m.toString() === userId);
     const isRemoved = group.removedMembers.some((m) => m.toString() === userId);
 
-    // Allow removed members read-only access
     if (!isMember && !isRemoved) {
       return res
         .status(403)
@@ -78,7 +77,6 @@ function getMuteExpiry(duration) {
 function getUnreadCount(group, userId) {
   const lastRead = group.lastReadAt?.get(userId);
   if (!lastRead) {
-    // Never opened — every message is unread
     return group.totalMessages || 0;
   }
   try {
@@ -104,8 +102,6 @@ router.get("/", protect, async (req, res) => {
     const result = groups.map((g) => {
       const isMember  = g.members.some((m) => m.toString() === userId);
       const isRemoved = g.removedMembers.some((m) => m.toString() === userId);
-
-      // Unread badge — visible only to current members (not removed, not non-members)
       const unreadCount = isMember ? getUnreadCount(g, userId) : 0;
 
       return {
@@ -121,8 +117,7 @@ router.get("/", protect, async (req, res) => {
         creatorPseudonym: g.creatorPseudonym,
         isClosed:         g.isClosed || false,
         totalMessages:    isMember ? (g.totalMessages || 0) : undefined,
-        unreadCount,                               // 0 or hidden for non-members
-        // Rejoin block info
+        unreadCount,
         rejoinBlockedUntil: (() => {
           const block = (g.rejoinBlock || []).find(
             (b) => b.user.toString() === userId
@@ -174,7 +169,6 @@ router.post("/join/:groupId", protect, async (req, res) => {
 
     const userId = req.user._id.toString();
 
-    // Check rejoin block
     const block = (group.rejoinBlock || []).find(
       (b) => b.user.toString() === userId
     );
@@ -196,7 +190,6 @@ router.post("/join/:groupId", protect, async (req, res) => {
       return res.status(400).json({ message: "Already a member" });
 
     group.members.push(req.user._id);
-    // Remove from removedMembers if they were previously removed
     group.removedMembers = (group.removedMembers || []).filter(
       (m) => m.toString() !== userId
     );
@@ -222,19 +215,17 @@ router.post("/leave/:groupId", protect, async (req, res) => {
     const userId = req.user._id.toString();
     group.members = group.members.filter((m) => m.toString() !== userId);
 
-    // Clear their read checkpoint so the badge resets if they ever rejoin
     if (group.lastReadAt) {
       group.lastReadAt.delete(userId);
       group.markModified("lastReadAt");
     }
 
-    // Add 24 h rejoin block
     group.rejoinBlock = (group.rejoinBlock || []).filter(
       (b) => b.user.toString() !== userId
     );
     group.rejoinBlock.push({
-      user:       req.user._id,
-      unblockAt:  new Date(Date.now() + 24 * 60 * 60 * 1000),
+      user:      req.user._id,
+      unblockAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
     });
 
     await group.save();
@@ -248,7 +239,7 @@ router.post("/leave/:groupId", protect, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// POST /api/groups/:groupId/mark-read — call when user opens the chat screen
+// POST /api/groups/:groupId/mark-read
 // ─────────────────────────────────────────────────────────────────────────────
 router.post("/:groupId/mark-read", protect, requireMember, async (req, res) => {
   try {
@@ -288,7 +279,7 @@ router.get("/:groupId/members", protect, requireMember, async (req, res) => {
     );
 
     const members = group.members.map((m) => {
-      const muteInfo        = group.getMuteInfo(m._id);
+      const muteInfo         = group.getMuteInfo(m._id);
       const isCurrentlyMuted = group.isUserMuted(m._id);
       return {
         _id:           m._id,
@@ -327,7 +318,6 @@ router.get("/:groupId/posts", protect, requireMember, async (req, res) => {
       .sort({ createdAt: firstId ? -1 : 1 })
       .limit(limit);
 
-    // Mark messages as delivered for this user
     const userId = req.user._id.toString();
     const undelivered = posts.filter(
       (p) =>
@@ -365,7 +355,6 @@ router.get("/:groupId/posts", protect, requireMember, async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 router.post("/:groupId/posts", protect, requireMember, async (req, res) => {
   try {
-    // Removed members cannot post
     if (req.isRemovedMember) {
       return res
         .status(403)
@@ -385,13 +374,12 @@ router.post("/:groupId/posts", protect, requireMember, async (req, res) => {
         .json({ message: "This circle is closed. Posting is paused." });
     }
 
-    // Auto-expire mutes then check
     const isMuted = group.isUserMuted(req.user._id);
     if (isMuted && !keeper) {
       const muteInfo = group.getMuteInfo(req.user._id);
       return res.status(403).json({
-        message:      "You have been muted in this circle.",
-        muteReason:   muteInfo?.reason    || "",
+        message:       "You have been muted in this circle.",
+        muteReason:    muteInfo?.reason    || "",
         muteExpiresAt: muteInfo?.expiresAt || null,
       });
     }
@@ -407,15 +395,14 @@ router.post("/:groupId/posts", protect, requireMember, async (req, res) => {
     const mentionedNames = extractMentions(content);
 
     const post = await GroupPost.create({
-      group:    req.params.groupId,
-      author:   req.user._id,
+      group:     req.params.groupId,
+      author:    req.user._id,
       pseudonym: req.user.pseudonym,
       content,
       mood:    mood || "hope",
       replyTo: replyTo || null,
     });
 
-    // ── Increment total message counter ───────────────────────────────────
     await Group.findByIdAndUpdate(req.params.groupId, {
       $inc: { totalMessages: 1 },
     });
@@ -425,7 +412,6 @@ router.post("/:groupId/posts", protect, requireMember, async (req, res) => {
         groupId: req.params.groupId,
         post:    post.toObject(),
       });
-      // Broadcast so every member's GroupsScreen badge can update
       req.io.emit("group_new_message", {
         groupId:      req.params.groupId,
         senderUserId: req.user._id.toString(),
@@ -449,14 +435,14 @@ router.post("/:groupId/posts", protect, requireMember, async (req, res) => {
             });
           }
           await Notification.create({
-            recipient:        originalPost.author,
-            sender:           req.user._id,
-            senderPseudonym:  req.user.pseudonym,
-            type:             "reply",
-            post:             post._id,
-            postPreview:      originalPost.content?.substring(0, 60),
-            commentText:      content.substring(0, 100),
-            read:             false,
+            recipient:       originalPost.author,
+            sender:          req.user._id,
+            senderPseudonym: req.user.pseudonym,
+            type:            "reply",
+            post:            post._id,
+            postPreview:     originalPost.content?.substring(0, 60),
+            commentText:     content.substring(0, 100),
+            read:            false,
           });
         }
       } catch (e) {
@@ -464,7 +450,7 @@ router.post("/:groupId/posts", protect, requireMember, async (req, res) => {
       }
     }
 
-    // ── @mention notifications ────────────────────────────────────────────
+    // ── @mention / @all notifications ─────────────────────────────────────
     if (mentionedNames.length > 0) {
       try {
         const groupDoc = await Group.findById(req.params.groupId).populate(
@@ -492,12 +478,12 @@ router.post("/:groupId/posts", protect, requireMember, async (req, res) => {
       }
     }
 
-    // ── General group-post notification ───────────────────────────────────
+    // ── General group-post notification (all members, no slice limit) ─────
     if (!replyTo && mentionedNames.length === 0) {
       try {
-        const otherMembers = group.members
-          .filter((m) => m.toString() !== req.user._id.toString())
-          .slice(0, 10);
+        const otherMembers = group.members.filter(
+          (m) => m.toString() !== req.user._id.toString()
+        );
         for (const memberId of otherMembers) {
           const canPush = await getPushEnabled(memberId, "groupPosts");
           if (canPush) {
@@ -611,14 +597,18 @@ router.delete("/:groupId/posts/:postId", protect, requireMember, async (req, res
       }
     }
 
-    post.content = "This message was deleted.";
-    post.deleted = true;
+    post.content            = "This message was deleted.";
+    post.deleted            = true;
+    post.deletedBy          = isAuthor ? "self" : "Crown_Keeper";
+    post.deletedByPseudonym = isAuthor ? null : req.user.pseudonym;
     await post.save({ validateBeforeSave: false });
 
     if (req.io) {
       req.io.to(`group:${req.params.groupId}`).emit("group_post_deleted", {
-        groupId: req.params.groupId,
-        postId:  req.params.postId,
+        groupId:            req.params.groupId,
+        postId:             req.params.postId,
+        deletedBy:          isAuthor ? "self" : "Crown_Keeper",
+        deletedByPseudonym: isAuthor ? null : req.user.pseudonym,
       });
     }
 
@@ -637,7 +627,7 @@ router.delete("/:groupId/posts/:postId", protect, requireMember, async (req, res
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// POST /api/groups/:groupId/posts/:postId/read — mark individual message read
+// POST /api/groups/:groupId/posts/:postId/read
 // ─────────────────────────────────────────────────────────────────────────────
 router.post(
   "/:groupId/posts/:postId/read",
@@ -655,9 +645,9 @@ router.post(
 
       if (req.io) {
         req.io.to(`group:${req.params.groupId}`).emit("message_read", {
-          groupId:  req.params.groupId,
-          postId:   post._id,
-          userId:   req.user._id,
+          groupId:   req.params.groupId,
+          postId:    post._id,
+          userId:    req.user._id,
           pseudonym: req.user.pseudonym,
         });
       }
@@ -670,7 +660,7 @@ router.post(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /api/groups/:groupId/posts/:postId/info — message delivery/read info
+// GET /api/groups/:groupId/posts/:postId/info
 // ─────────────────────────────────────────────────────────────────────────────
 router.get(
   "/:groupId/posts/:postId/info",
@@ -679,8 +669,8 @@ router.get(
   async (req, res) => {
     try {
       const post = await GroupPost.findById(req.params.postId)
-        .populate("readBy",     "pseudonym")
-        .populate("deliveredTo","pseudonym");
+        .populate("readBy",      "pseudonym")
+        .populate("deliveredTo", "pseudonym");
       if (!post) return res.status(404).json({ message: "Post not found" });
       if (post.author.toString() !== req.user._id.toString()) {
         return res
@@ -716,7 +706,6 @@ router.post("/:groupId/mute/:userId", protect, requireMember, async (req, res) =
     const { reason = "", duration = "permanent" } = req.body;
     const expiresAt = getMuteExpiry(duration);
 
-    // Remove existing mute entry then replace
     group.mutedMembers = (group.mutedMembers || []).filter(
       (m) => m.user.toString() !== req.params.userId
     );
@@ -729,7 +718,6 @@ router.post("/:groupId/mute/:userId", protect, requireMember, async (req, res) =
     });
     await group.save();
 
-    // Notify muted user
     try {
       const durationLabel =
         duration === "permanent" ? "indefinitely" :
@@ -797,7 +785,7 @@ router.delete("/:groupId/mute/:userId", protect, requireMember, async (req, res)
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DELETE /api/groups/:groupId/members/:userId — remove member (Circle_Keeper)
+// DELETE /api/groups/:groupId/members/:userId — remove member
 // ─────────────────────────────────────────────────────────────────────────────
 router.delete(
   "/:groupId/members/:userId",
@@ -816,7 +804,6 @@ router.delete(
           .status(400)
           .json({ message: "Circle_Keeper cannot remove themselves" });
 
-      // Move from members → removedMembers (can still view)
       group.members = group.members.filter(
         (m) => m.toString() !== req.params.userId
       );
@@ -826,7 +813,6 @@ router.delete(
         group.removedMembers.push(req.params.userId);
       }
 
-      // Clear their read checkpoint — they lose badge visibility
       if (group.lastReadAt) {
         group.lastReadAt.delete(req.params.userId);
         group.markModified("lastReadAt");
@@ -963,7 +949,7 @@ router.post("/:groupId/pin", protect, requireMember, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /api/groups/:groupId/audit — audit log (Circle_Keeper only)
+// GET /api/groups/:groupId/audit — Circle_Keeper only
 // ─────────────────────────────────────────────────────────────────────────────
 router.get("/:groupId/audit", protect, requireMember, async (req, res) => {
   try {
@@ -1004,20 +990,19 @@ router.post(
         return res.status(404).json({ message: "User not found" });
 
       await GroupReport.create({
-        group:                req.params.groupId,
-        groupName:            group.name,
-        reportedBy:           req.user._id,
-        reportedByPseudonym:  req.user.pseudonym,
-        targetUser:           req.params.userId,
-        targetUserPseudonym:  targetUser.pseudonym,
+        group:               req.params.groupId,
+        groupName:           group.name,
+        reportedBy:          req.user._id,
+        reportedByPseudonym: req.user.pseudonym,
+        targetUser:          req.params.userId,
+        targetUserPseudonym: targetUser.pseudonym,
         reason,
-        details:              details || "",
-        postContext:          postContext || "",
+        details:             details || "",
+        postContext:         postContext || "",
       });
 
       return res.status(201).json({
-        message:
-          "Report submitted. Thank you for keeping this circle safe 💜",
+        message: "Report submitted. Thank you for keeping this circle safe 💜",
       });
     } catch (e) {
       return res.status(500).json({ message: e.message });
