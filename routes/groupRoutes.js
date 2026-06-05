@@ -429,9 +429,13 @@ router.post("/:groupId/posts", protect, requireMember, async (req, res) => {
           const canPush = await getPushEnabled(originalPost.author, "replies");
           if (canPush) {
             await sendPushNotification(originalPost.author, {
-              title: `${req.user.pseudonym} replied to you`,
+              title: `${req.user.pseudonym} replied to you in ${group.name}`,
               body:  content.substring(0, 80),
-              data:  { screen: "GroupChat", groupId: req.params.groupId },
+              data:  {
+                screen:  "GroupChat",
+                groupId: req.params.groupId,
+                postId:  post._id.toString(), // ← scroll to this message
+              },
             });
           }
           await Notification.create({
@@ -469,7 +473,11 @@ router.post("/:groupId/posts", protect, requireMember, async (req, res) => {
             await sendPushNotification(member._id, {
               title: `${req.user.pseudonym} mentioned you in ${group.name}`,
               body:  content.substring(0, 80),
-              data:  { screen: "GroupChat", groupId: req.params.groupId },
+              data:  {
+                screen:  "GroupChat",
+                groupId: req.params.groupId,
+                postId:  post._id.toString(), // ← scroll to this message
+              },
             });
           }
         }
@@ -490,7 +498,11 @@ router.post("/:groupId/posts", protect, requireMember, async (req, res) => {
             await sendPushNotification(memberId, {
               title: `${req.user.pseudonym} posted in ${group.name}`,
               body:  content.substring(0, 80),
-              data:  { screen: "GroupChat", groupId: req.params.groupId },
+              data:  {
+                screen:  "GroupChat",
+                groupId: req.params.groupId,
+                postId:  post._id.toString(), // ← scroll to this message
+              },
             });
           }
         }
@@ -727,7 +739,10 @@ router.post("/:groupId/mute/:userId", protect, requireMember, async (req, res) =
       await sendPushNotification(req.params.userId, {
         title: `You've been muted in ${group.name}`,
         body:  `You cannot send messages ${durationLabel}${reason ? `. Reason: ${reason}` : "."}`,
-        data:  { screen: "GroupChat", groupId: req.params.groupId },
+        data:  {
+          screen:  "GroupChat",
+          groupId: req.params.groupId,
+        },
       });
     } catch (e) {
       console.log("Mute notif error:", e.message);
