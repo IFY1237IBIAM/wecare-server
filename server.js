@@ -133,7 +133,7 @@ app.get("/api/health", (req, res) => {
 });
 
 // Removed the old duplicate assetlinks.json route here
-
+app.use("/", require("./routes/wellKnownRoutes"));
 app.use("/api/auth/login", loginLimiter);
 app.use("/api/auth",          require("./routes/authRoutes"));
 app.use("/api/posts",         require("./routes/postRoutes"));
