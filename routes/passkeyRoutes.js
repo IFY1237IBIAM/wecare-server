@@ -5,7 +5,7 @@
 
 const express = require("express");
 const router  = express.Router();
-const protect = require("../middleware/auth");
+const auth = require("../middleware/authMiddleware");
 const ctrl    = require("../controllers/passkeyController");
 
 // Registration — user must be logged in
