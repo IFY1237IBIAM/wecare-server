@@ -2,46 +2,45 @@
  * routes/wellKnownRoutes.js
  *
  * Serves the domain verification files required by Apple and Google
- * for passkey/WebAuthn to work. These MUST be reachable at your
- * PASSKEY_RP_ID domain over HTTPS before any passkey will work.
+ * for passkey/WebAuthn to work.
  *
  * Mount BEFORE all other routes in server.js:
  *   app.use("/", require("./routes/wellKnownRoutes"));
- *
- * Replace the placeholder values:
- *   APPLE_TEAM_ID     → Your Apple Developer Team ID
- *                       Find at: developer.apple.com/account → Membership
- *   IOS_BUNDLE_ID     → Same as expo.ios.bundleIdentifier in app.json
- *   ANDROID_PACKAGE   → Same as expo.android.package in app.json
- *   ANDROID_SHA256    → SHA-256 fingerprint of your Android signing certificate
- *                       Run: keytool -list -v -keystore release.keystore
  */
 
 const express = require("express");
-const router  = express.Router();
+const router = express.Router();
 
-const APPLE_TEAM_ID   = process.env.APPLE_TEAM_ID   || "YOURTEAMID";
-const IOS_BUNDLE_ID   = process.env.IOS_BUNDLE_ID   || "com.yourcompany.hushcircle";
-const ANDROID_PACKAGE = process.env.ANDROID_PACKAGE || "com.yourcompany.hushcircle";
-const ANDROID_SHA256  = process.env.ANDROID_SHA256  || "YOUR:SHA256:FINGERPRINT:HERE";
+// ── Config ─────────────────────────────────────────────────────────────────────
+const ANDROID_PACKAGE = "com.hushcircle.app";
+
+// We are using both debug + release fingerprints for now
+const ANDROID_SHA256S = [
+  "D4:06:CB:10:C8:6E:76:C6:5D:09:61:38:50:0E:1E:07:B6:4C:60:58:59:24:57:CF:6A:2B:13:74:60:01:3C:DF", // Debug
+  "0E:73:88:4B:0D:0D:57:29:99:A2:3F:AD:94:A0:61:16:30:B5:2C:63:1A:13:24:B5:99:32:D4:44:40:4E:D2:D4"  // Release
+];
 
 // ── iOS: Apple App Site Association ──────────────────────────────────────────
-// Required for passkeys to work on iOS 16+
+// Commented out for now because you haven't enrolled in Apple Developer Program yet
+// Uncomment and update when you get your Team ID ($99/year)
+/*
 router.get("/.well-known/apple-app-site-association", (req, res) => {
   res.setHeader("Content-Type", "application/json");
   res.json({
     applinks: {},
     webcredentials: {
-      apps: [`${APPLE_TEAM_ID}.${IOS_BUNDLE_ID}`],
+      apps: [`${process.env.APPLE_TEAM_ID || "YOURTEAMID"}.com.hushcircle.app`],
     },
     appclips: {},
   });
 });
+*/
 
 // ── Android: Digital Asset Links ─────────────────────────────────────────────
-// Required for passkeys to work on Android 9+
 router.get("/.well-known/assetlinks.json", (req, res) => {
   res.setHeader("Content-Type", "application/json");
+  res.setHeader("Access-Control-Allow-Origin", "*");   // Good for debugging
+
   res.json([
     {
       relation: [
@@ -51,7 +50,7 @@ router.get("/.well-known/assetlinks.json", (req, res) => {
       target: {
         namespace:                "android_app",
         package_name:             ANDROID_PACKAGE,
-        sha256_cert_fingerprints: [ANDROID_SHA256],
+        sha256_cert_fingerprints: ANDROID_SHA256S,
       },
     },
   ]);
