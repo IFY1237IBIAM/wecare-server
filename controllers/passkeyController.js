@@ -24,7 +24,7 @@ const {
 } = require("@simplewebauthn/server");
 
 const User        = require("../models/User");
-const Passkey     = require("../models/Passkey");
+const Passkey     = require("../models/Passkey")
 const jwt         = require("jsonwebtoken");
 
 // ── Relying Party config ──────────────────────────────────────────────────────
