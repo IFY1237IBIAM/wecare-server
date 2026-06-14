@@ -54,7 +54,14 @@ router.get("/", protect, async (req, res) => {
   }
 });
 
-
+router.get("/my-token", protect, async (req, res) => {
+  try {
+    const tokens = await NotificationToken.find({ user: req.user._id });
+    return res.json({ tokens });
+  } catch (e) {
+    return res.status(500).json({ message: e.message });
+  }
+});
 // ── Unread count ───────────────────────────────────────────────────────────
 router.get("/unread-count", protect, async (req, res) => {
   try {
