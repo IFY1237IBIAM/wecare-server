@@ -1,5 +1,6 @@
 /**
- * controllers/passkeyController.js — Production + Email Notifications
+ * controllers/passkeyController.js — Production Final
+ * Fix: biometric fallback no longer sets credentialID (avoids duplicate key on null)
  */
 
 const {
@@ -34,7 +35,10 @@ const generateToken = (id, role) =>
 const challengeStore = new Map();
 
 function storeChallenge(userId, challenge) {
-  challengeStore.set(String(userId), { challenge, expiresAt: Date.now() + 5 * 60 * 1000 });
+  challengeStore.set(String(userId), {
+    challenge,
+    expiresAt: Date.now() + 5 * 60 * 1000,
+  });
 }
 
 function consumeChallenge(userId) {
@@ -50,7 +54,12 @@ exports.getRegistrationOptions = async (req, res) => {
     const user = await User.findById(req.user._id);
     if (!user) return res.status(404).json({ message: "User not found." });
 
-    const existing           = await Passkey.find({ user: user._id, tier: "webauthn" });
+    const existing = await Passkey.find({
+      user: user._id,
+      tier: "webauthn",
+      credentialID: { $ne: null },
+    });
+
     const excludeCredentials = existing.map((p) => ({
       id:         Buffer.from(p.credentialID, "base64url"),
       type:       "public-key",
@@ -76,6 +85,7 @@ exports.getRegistrationOptions = async (req, res) => {
     storeChallenge(user._id, options.challenge);
     return res.json(options);
   } catch (err) {
+    console.error("getRegistrationOptions error:", err);
     return res.status(500).json({ message: err.message });
   }
 };
@@ -84,36 +94,47 @@ exports.getRegistrationOptions = async (req, res) => {
 exports.verifyRegistration = async (req, res) => {
   try {
     const { attestationResponse, deviceName, deviceId, fallback } = req.body;
+
     const user = await User.findById(req.user._id);
     if (!user) return res.status(404).json({ message: "User not found." });
 
     // ── Tier 2: biometric fallback ────────────────────────────────────────────
     if (fallback === true || !attestationResponse) {
+      const resolvedDeviceId   = deviceId   || "unknown";
+      const resolvedDeviceName = deviceName?.trim() || "Device";
+
+      // Check if this device already has a fallback passkey
       const existingFallback = await Passkey.findOne({
         user:     user._id,
         tier:     "biometric",
-        deviceId: deviceId || "unknown",
+        deviceId: resolvedDeviceId,
       });
 
       let passkey;
+
       if (existingFallback) {
-        existingFallback.deviceName = deviceName?.trim() || existingFallback.deviceName;
-        existingFallback.createdAt  = new Date();
+        // Update existing — don't create duplicate
+        existingFallback.deviceName = resolvedDeviceName;
+        existingFallback.updatedAt  = new Date();
         await existingFallback.save();
         passkey = existingFallback;
+        console.log(`Passkey updated for user ${user._id} device ${resolvedDeviceId}`);
       } else {
+        // Create new — note: NO credentialID field set for biometric tier
+        // This avoids the unique index duplicate key error on null values
         passkey = await Passkey.create({
           user:       user._id,
           tier:       "biometric",
-          deviceId:   deviceId || "unknown",
-          deviceName: deviceName?.trim() || "Device",
-          createdAt:  new Date(),
+          deviceId:   resolvedDeviceId,
+          deviceName: resolvedDeviceName,
+          // credentialID intentionally omitted — sparse index ignores null
         });
+        console.log(`Passkey created for user ${user._id} device ${resolvedDeviceId}`);
       }
 
       await User.findByIdAndUpdate(user._id, { passkeyEnabled: true });
 
-      // Send email notification — non-fatal
+      // Send email — non-fatal
       sendPasskeyRegisteredEmail({
         to:         user.email,
         pseudonym:  user.pseudonym,
@@ -146,6 +167,7 @@ exports.verifyRegistration = async (req, res) => {
         requireUserVerification: true,
       });
     } catch (verifyErr) {
+      console.error("verifyRegistrationResponse error:", verifyErr);
       return res.status(400).json({ message: `Verification failed: ${verifyErr.message}` });
     }
 
@@ -166,12 +188,11 @@ exports.verifyRegistration = async (req, res) => {
       backedUp:     credentialBackedUp,
       transports:   credential.transports || ["internal"],
       deviceName:   deviceName?.trim() || "Device",
-      createdAt:    new Date(),
     });
 
     await User.findByIdAndUpdate(user._id, { passkeyEnabled: true });
 
-    // Send email notification — non-fatal
+    // Send email — non-fatal
     sendPasskeyRegisteredEmail({
       to:         user.email,
       pseudonym:  user.pseudonym,
@@ -188,6 +209,7 @@ exports.verifyRegistration = async (req, res) => {
       tier:       "webauthn",
     });
   } catch (err) {
+    console.error("verifyRegistration error:", err.message, err.code);
     return res.status(500).json({ message: err.message });
   }
 };
@@ -201,8 +223,12 @@ exports.getAuthenticationOptions = async (req, res) => {
     const user = await User.findOne({ pseudonym: pseudonym.trim() });
     if (!user) return res.status(404).json({ message: "No passkey found for this account." });
 
-    const webAuthnPasskeys = await Passkey.find({ user: user._id, tier: "webauthn" });
-    const allPasskeys      = await Passkey.find({ user: user._id });
+    const webAuthnPasskeys = await Passkey.find({
+      user: user._id,
+      tier: "webauthn",
+      credentialID: { $ne: null },
+    });
+    const allPasskeys = await Passkey.find({ user: user._id });
 
     if (allPasskeys.length > 0 && webAuthnPasskeys.length === 0) {
       return res.json({ fallbackOnly: true, userId: user._id });
@@ -227,6 +253,7 @@ exports.getAuthenticationOptions = async (req, res) => {
     storeChallenge(user._id, options.challenge);
     return res.json({ ...options, userId: user._id });
   } catch (err) {
+    console.error("getAuthenticationOptions error:", err);
     return res.status(500).json({ message: err.message });
   }
 };
@@ -244,8 +271,14 @@ exports.verifyAuthentication = async (req, res) => {
     if (user.isBanned) return res.status(403).json({ message: "Account suspended." });
 
     const credentialID = assertionResponse.id;
-    const passkey = await Passkey.findOne({ user: user._id, credentialID, tier: "webauthn" });
-    if (!passkey) return res.status(404).json({ message: "Passkey not found. Please re-register." });
+    const passkey      = await Passkey.findOne({
+      user: user._id,
+      credentialID,
+      tier: "webauthn",
+    });
+    if (!passkey) {
+      return res.status(404).json({ message: "Passkey not found. Please re-register." });
+    }
 
     const expectedChallenge = consumeChallenge(user._id);
     if (!expectedChallenge) {
@@ -268,6 +301,7 @@ exports.verifyAuthentication = async (req, res) => {
         requireUserVerification: true,
       });
     } catch (verifyErr) {
+      console.error("verifyAuthenticationResponse error:", verifyErr);
       return res.status(401).json({ message: `Authentication failed: ${verifyErr.message}` });
     }
 
@@ -299,6 +333,7 @@ exports.verifyAuthentication = async (req, res) => {
       },
     });
   } catch (err) {
+    console.error("verifyAuthentication error:", err);
     return res.status(500).json({ message: err.message });
   }
 };
@@ -311,6 +346,7 @@ exports.listPasskeys = async (req, res) => {
       .sort({ createdAt: -1 });
     return res.json({ passkeys });
   } catch (err) {
+    console.error("listPasskeys error:", err);
     return res.status(500).json({ message: err.message });
   }
 };
@@ -318,27 +354,36 @@ exports.listPasskeys = async (req, res) => {
 // ── DELETE /api/passkey/:passkeyId ────────────────────────────────────────────
 exports.deletePasskey = async (req, res) => {
   try {
-    const passkey = await Passkey.findOne({ _id: req.params.passkeyId, user: req.user._id });
+    const passkey = await Passkey.findOne({
+      _id:  req.params.passkeyId,
+      user: req.user._id,
+    });
     if (!passkey) return res.status(404).json({ message: "Passkey not found." });
 
     const deletedName = passkey.deviceName;
     await Passkey.findByIdAndDelete(passkey._id);
 
     const remaining = await Passkey.countDocuments({ user: req.user._id });
-    if (remaining === 0) await User.findByIdAndUpdate(req.user._id, { passkeyEnabled: false });
+    if (remaining === 0) {
+      await User.findByIdAndUpdate(req.user._id, { passkeyEnabled: false });
+    }
 
-    // Fetch user for email — non-fatal
-    User.findById(req.user._id).select("email pseudonym").then((user) => {
-      if (!user) return;
-      sendPasskeyDeletedEmail({
-        to:         user.email,
-        pseudonym:  user.pseudonym,
-        deviceName: deletedName,
-      }).catch((err) => console.error("Passkey deleted email failed (non-fatal):", err));
-    }).catch(() => {});
+    // Get user for email — non-fatal
+    User.findById(req.user._id)
+      .select("email pseudonym")
+      .then((user) => {
+        if (!user) return;
+        sendPasskeyDeletedEmail({
+          to:         user.email,
+          pseudonym:  user.pseudonym,
+          deviceName: deletedName,
+        }).catch((err) => console.error("Passkey deleted email failed (non-fatal):", err));
+      })
+      .catch(() => {});
 
     return res.json({ message: "Passkey deleted.", remaining });
   } catch (err) {
+    console.error("deletePasskey error:", err);
     return res.status(500).json({ message: err.message });
   }
 };

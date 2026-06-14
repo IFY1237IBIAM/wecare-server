@@ -1,4 +1,5 @@
-# HushCircle Security Email Test Script
+# HushCircle Security Email Test Script v2
+# Fixes: disable uses correct PIN flow, passkey uses separate debug step
 # Run: .\test-emails.ps1
 
 $BASE     = "https://wecare-backend-anxl.onrender.com/api"
@@ -10,6 +11,7 @@ $headers = @{ "Content-Type" = "application/json" }
 function Pass($msg) { Write-Host "  PASS: $msg" -ForegroundColor Green }
 function Fail($msg) { Write-Host "  FAIL: $msg" -ForegroundColor Red }
 function Info($msg) { Write-Host "  INFO: $msg" -ForegroundColor Yellow }
+function Warn($msg) { Write-Host "  WARN: $msg" -ForegroundColor Magenta }
 function Section($title) {
     Write-Host ""
     Write-Host "--- $title ---" -ForegroundColor Cyan
@@ -27,7 +29,6 @@ try {
     $token     = $res.token
     $pseudonym = $res.user.pseudonym
     Pass "Logged in as: $pseudonym"
-    Info "Two-step currently enabled: $($res.twoStep)"
 } catch {
     Fail "Login failed: $($_.Exception.Message)"
     exit
@@ -38,7 +39,7 @@ $auth = @{
     "Authorization" = "Bearer $token"
 }
 
-# STEP 2: Check current status
+# STEP 2: Check status
 Section "STEP 2 - Current Security Status"
 
 $twoStepEnabled = $false
@@ -48,118 +49,159 @@ try {
     Pass "Status fetched"
     Info "twoStepEnabled : $($status.twoStepEnabled)"
     Info "passkeyEnabled : $($status.passkeyEnabled)"
-    Info "recoveryUsed   : $($status.recoveryUsed)"
 } catch {
     Fail "Status fetch failed: $($_.Exception.Message)"
 }
 
-# STEP 3: Enable two-step (triggers enabled email)
-Section "STEP 3 - Enable Two-Step"
+# STEP 3: Handle two-step state
+# If already enabled from last test run, disable first then re-enable cleanly
+Section "STEP 3 - Two-Step Setup"
 
-$recoveryCode = $null
+$testPin = "246810"
 
 if ($twoStepEnabled -eq $true) {
-    Info "Two-step is already ON - skipping enable test"
-    Info "Check inbox for a previously received enabled email"
-} else {
+    Warn "Two-step is already ON from a previous test run"
+    Info "Attempting to disable with common test PINs..."
+
+    $pinsToTry = @("123456", "654321", "246810")
+    $disabled  = $false
+
+    foreach ($tryPin in $pinsToTry) {
+        try {
+            $body = '{"pin":"' + $tryPin + '"}'
+            Invoke-RestMethod -Uri "$BASE/two-step/disable" -Method POST -Headers $auth -Body $body | Out-Null
+            Pass "Disabled with PIN: $tryPin"
+            $disabled       = $true
+            $twoStepEnabled = $false
+            break
+        } catch {
+            Info "PIN $tryPin did not work, trying next..."
+        }
+    }
+
+    if (-not $disabled) {
+        Warn "Could not disable with test PINs - will test emails on existing enabled account"
+        Warn "Go to Security screen in app and disable two-step manually, then re-run this script"
+    }
+}
+
+# Now enable fresh with our known test PIN
+if ($twoStepEnabled -eq $false) {
     try {
-        $body = '{"pin":"123456","hint":"test hint"}'
+        $body = '{"pin":"' + $testPin + '","hint":"even numbers"}'
         $res  = Invoke-RestMethod -Uri "$BASE/two-step/enable" -Method POST -Headers $auth -Body $body
-        Pass "Two-step enabled"
+        Pass "Two-step enabled with PIN: $testPin"
         Info "Recovery code: $($res.recoveryCode)"
-        Info "EMAIL SENT: Two-step verification enabled"
-        $recoveryCode   = $res.recoveryCode
+        Info "EMAIL SENT: Two-step verification ENABLED"
         $twoStepEnabled = $true
     } catch {
         Fail "Enable failed: $($_.Exception.Message)"
     }
 }
 
-# STEP 4: Change PIN (triggers PIN changed email)
+# STEP 4: Change PIN
 Section "STEP 4 - Change PIN"
+
+$newPin  = "135790"
+$pinBack = $testPin
 
 if ($twoStepEnabled -eq $true) {
     try {
-        $body = '{"currentPin":"123456","newPin":"654321"}'
+        $body = '{"currentPin":"' + $testPin + '","newPin":"' + $newPin + '"}'
         $res  = Invoke-RestMethod -Uri "$BASE/two-step/change-pin" -Method POST -Headers $auth -Body $body
-        Pass "PIN changed to 654321"
+        Pass "PIN changed to: $newPin"
         Info "EMAIL SENT: PIN changed"
 
         Start-Sleep -Seconds 1
 
-        $body2 = '{"currentPin":"654321","newPin":"123456"}'
+        $body2 = '{"currentPin":"' + $newPin + '","newPin":"' + $pinBack + '"}'
         Invoke-RestMethod -Uri "$BASE/two-step/change-pin" -Method POST -Headers $auth -Body $body2 | Out-Null
-        Pass "PIN restored to 123456"
+        Pass "PIN restored to: $pinBack"
         Info "EMAIL SENT: PIN changed again"
     } catch {
         Fail "Change PIN failed: $($_.Exception.Message)"
-        Info "Two-step may have been enabled with a different PIN already"
     }
 } else {
-    Info "Skipping PIN change - two-step not enabled"
+    Info "Skipping - two-step not enabled"
 }
 
-# STEP 5: Disable two-step (triggers disabled email)
+# STEP 5: Disable two-step
 Section "STEP 5 - Disable Two-Step"
 
 if ($twoStepEnabled -eq $true) {
     try {
-        $body = '{"pin":"123456"}'
+        $body = '{"pin":"' + $testPin + '"}'
         $res  = Invoke-RestMethod -Uri "$BASE/two-step/disable" -Method POST -Headers $auth -Body $body
         Pass "Two-step disabled"
-        Info "EMAIL SENT: Two-step verification disabled"
+        Info "EMAIL SENT: Two-step verification DISABLED"
         $twoStepEnabled = $false
     } catch {
         Fail "Disable failed: $($_.Exception.Message)"
-        Info "Try disabling manually in the app Security screen"
+        Info "This is unexpected - the PIN should be $testPin"
     }
 } else {
-    Info "Skipping disable - two-step not enabled"
+    Info "Skipping - two-step not enabled"
 }
 
-# STEP 6: Register test passkey (triggers registered email)
-Section "STEP 6 - Register Test Passkey"
+# STEP 6: Debug passkey controller first
+Section "STEP 6 - Check Passkey Controller Health"
+
+try {
+    $opts = Invoke-RestMethod -Uri "$BASE/passkey/register/options" -Method GET -Headers $auth
+    Pass "Passkey register/options endpoint OK"
+    Info "rpId: $($opts.rp.id)"
+} catch {
+    Fail "Passkey register/options failed: $($_.Exception.Message)"
+    Warn "This means passkeyController.js has a require error"
+    Warn "Check Render logs for: Cannot find module or sendPasskeyRegisteredEmail is not a function"
+}
+
+# STEP 7: Register test passkey
+Section "STEP 7 - Register Test Passkey"
 
 $passkeyId = $null
 
 try {
-    $body = '{"fallback":true,"deviceName":"PowerShell Test Device","deviceId":"ps-test-001"}'
+    $body = '{"fallback":true,"deviceName":"PowerShell Test Device","deviceId":"ps-test-002"}'
     $res  = Invoke-RestMethod -Uri "$BASE/passkey/register/verify" -Method POST -Headers $auth -Body $body
     Pass "Test passkey registered"
     Info "Passkey ID  : $($res.passkeyId)"
     Info "Device name : $($res.deviceName)"
     Info "Tier        : $($res.tier)"
-    Info "EMAIL SENT: New passkey registered"
+    Info "EMAIL SENT: New passkey REGISTERED"
     $passkeyId = $res.passkeyId
 } catch {
-    Fail "Passkey register failed: $($_.Exception.Message)"
+    Fail "Passkey register/verify failed: $($_.Exception.Message)"
+    Warn "Check Render logs for the exact error"
+    Warn "Most likely cause: sendPasskeyRegisteredEmail not exported from utils/email.js"
+    Warn "Make sure you deployed the updated email.js to Render"
 }
 
-# STEP 7: Delete test passkey (triggers deleted email)
-Section "STEP 7 - Delete Test Passkey"
+# STEP 8: Delete test passkey
+Section "STEP 8 - Delete Test Passkey"
 
 if ($passkeyId) {
     try {
         $res = Invoke-RestMethod -Uri "$BASE/passkey/$passkeyId" -Method DELETE -Headers $auth
         Pass "Test passkey deleted"
         Info "Remaining passkeys: $($res.remaining)"
-        Info "EMAIL SENT: Passkey removed"
+        Info "EMAIL SENT: Passkey REMOVED"
     } catch {
         Fail "Passkey delete failed: $($_.Exception.Message)"
     }
 } else {
-    Info "Skipping delete - no passkey ID from previous step"
+    Info "Skipping - no passkey ID (register step failed)"
 }
 
-# STEP 8: Verify passkey list is clean
-Section "STEP 8 - Verify Passkey List"
+# STEP 9: Final passkey list check
+Section "STEP 9 - Final Passkey List"
 
 try {
     $list = Invoke-RestMethod -Uri "$BASE/passkey/list" -Method GET -Headers $auth
     Pass "Passkey list fetched"
     Info "Registered passkeys: $($list.passkeys.Count)"
     if ($list.passkeys.Count -eq 0) {
-        Pass "List is clean - test passkey was removed correctly"
+        Pass "List is clean"
     } else {
         foreach ($pk in $list.passkeys) {
             Info "  -> $($pk.deviceName) | $($pk.tier) | $($pk.createdAt)"
@@ -169,22 +211,36 @@ try {
     Fail "Passkey list failed: $($_.Exception.Message)"
 }
 
+# STEP 10: Final two-step status check
+Section "STEP 10 - Final Status Check"
+
+try {
+    $final = Invoke-RestMethod -Uri "$BASE/two-step/status" -Method GET -Headers $auth
+    Pass "Final status fetched"
+    Info "twoStepEnabled : $($final.twoStepEnabled)"
+    Info "passkeyEnabled : $($final.passkeyEnabled)"
+    if ($final.twoStepEnabled -eq $false -and $final.passkeyEnabled -eq $false) {
+        Pass "Account is back to clean state"
+    }
+} catch {
+    Fail "Final status check failed: $($_.Exception.Message)"
+}
+
 # Summary
 Section "DONE"
 Write-Host ""
-Write-Host "Now check inbox at: $EMAIL" -ForegroundColor Green
+Write-Host "Check inbox at: $EMAIL" -ForegroundColor Green
 Write-Host ""
-Write-Host "Expected emails:" -ForegroundColor Yellow
-Write-Host "  A. Two-step verification ENABLED"
-Write-Host "  B. Two-step PIN CHANGED"
-Write-Host "  C. Two-step PIN CHANGED again (restored)"
-Write-Host "  D. Two-step verification DISABLED"
-Write-Host "  E. New passkey REGISTERED"
-Write-Host "  F. Passkey REMOVED"
+Write-Host "Expected emails (A through F):" -ForegroundColor Yellow
+Write-Host "  A - Two-step verification ENABLED"
+Write-Host "  B - Two-step PIN CHANGED"
+Write-Host "  C - Two-step PIN CHANGED (restored)"
+Write-Host "  D - Two-step verification DISABLED"
+Write-Host "  E - New passkey REGISTERED"
+Write-Host "  F - Passkey REMOVED"
 Write-Host ""
-Write-Host "If emails are missing check:" -ForegroundColor Yellow
-Write-Host "  - Spam or junk folder"
-Write-Host "  - Resend dashboard at resend.com for send logs"
-Write-Host "  - NODE_ENV must NOT be development on Render"
-Write-Host "  - RESEND_API_KEY must be set correctly on Render"
+Write-Host "If step 6 or 7 still fails:" -ForegroundColor Yellow
+Write-Host "  Open Render dashboard, go to your backend service"
+Write-Host "  Click Logs and look for the error after the 500"
+Write-Host "  It will say exactly which function or module is missing"
 Write-Host ""
