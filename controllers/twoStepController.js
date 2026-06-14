@@ -1,15 +1,15 @@
 /**
- * controllers/twoStepController.js — Production
- *
- * Handles two-step verification (6-digit PIN) only.
- * Passkeys are handled separately in passkeyController.js.
- *
- * npm install bcryptjs (already in your project)
+ * controllers/twoStepController.js — Production + Email Notifications
  */
 
 const User   = require("../models/User");
 const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
+const {
+  sendTwoStepEnabledEmail,
+  sendTwoStepDisabledEmail,
+  sendPinChangedEmail,
+} = require("../utils/email");
 
 const hashPin = async (pin) => {
   const salt = await bcrypt.genSalt(12);
@@ -17,7 +17,7 @@ const hashPin = async (pin) => {
 };
 
 const generateRecoveryCode = () =>
-  crypto.randomBytes(5).toString("hex").toUpperCase(); // e.g. "A3F1C9B2D7"
+  crypto.randomBytes(5).toString("hex").toUpperCase();
 
 // ── GET /api/two-step/status ──────────────────────────────────────────────────
 exports.getTwoStepStatus = async (req, res) => {
@@ -45,13 +45,13 @@ exports.enableTwoStep = async (req, res) => {
       return res.status(400).json({ message: "PIN must be exactly 6 digits." });
     }
     const user = await User.findById(req.user._id)
-      .select("+twoStepPin +twoStepEnabled");
+      .select("+twoStepPin +twoStepEnabled email pseudonym");
     if (!user) return res.status(404).json({ message: "User not found." });
     if (user.twoStepEnabled) {
       return res.status(400).json({ message: "Two-step verification is already enabled." });
     }
 
-    const recoveryCode = generateRecoveryCode();
+    const recoveryCode       = generateRecoveryCode();
     user.twoStepPin          = await hashPin(pin);
     user.twoStepHint         = hint?.trim().slice(0, 50) || "";
     user.twoStepRecoveryCode = await hashPin(recoveryCode);
@@ -59,9 +59,15 @@ exports.enableTwoStep = async (req, res) => {
     user.twoStepEnabled      = true;
     await user.save({ validateBeforeSave: false });
 
+    // Send notification email — non-fatal, never blocks the response
+    sendTwoStepEnabledEmail({
+      to:        user.email,
+      pseudonym: user.pseudonym,
+    }).catch((err) => console.error("Two-step enabled email failed (non-fatal):", err));
+
     return res.status(200).json({
       message:      "Two-step verification enabled 💜",
-      recoveryCode, // shown ONCE — never stored in plaintext
+      recoveryCode,
     });
   } catch (err) {
     return res.status(500).json({ message: err.message });
@@ -73,8 +79,9 @@ exports.disableTwoStep = async (req, res) => {
   try {
     const { pin } = req.body;
     if (!pin) return res.status(400).json({ message: "PIN is required." });
+
     const user = await User.findById(req.user._id)
-      .select("+twoStepPin +twoStepEnabled");
+      .select("+twoStepPin +twoStepEnabled email pseudonym");
     if (!user) return res.status(404).json({ message: "User not found." });
     if (!user.twoStepEnabled) {
       return res.status(400).json({ message: "Two-step verification is not enabled." });
@@ -82,19 +89,30 @@ exports.disableTwoStep = async (req, res) => {
     const match = await bcrypt.compare(String(pin), user.twoStepPin || "");
     if (!match) return res.status(401).json({ message: "Incorrect PIN." });
 
+    // Capture before clearing
+    const emailTo        = user.email;
+    const emailPseudonym = user.pseudonym;
+
     user.twoStepEnabled      = false;
     user.twoStepPin          = undefined;
     user.twoStepHint         = "";
     user.twoStepRecoveryCode = undefined;
     user.twoStepRecoveryUsed = false;
     await user.save({ validateBeforeSave: false });
+
+    // Send notification email — non-fatal
+    sendTwoStepDisabledEmail({
+      to:        emailTo,
+      pseudonym: emailPseudonym,
+    }).catch((err) => console.error("Two-step disabled email failed (non-fatal):", err));
+
     return res.json({ message: "Two-step verification disabled." });
   } catch (err) {
     return res.status(500).json({ message: err.message });
   }
 };
 
-// ── POST /api/two-step/verify  (no auth middleware — pre-login) ───────────────
+// ── POST /api/two-step/verify  (no auth — pre-login) ─────────────────────────
 exports.verifyTwoStep = async (req, res) => {
   try {
     const { pin, email } = req.body;
@@ -103,12 +121,11 @@ exports.verifyTwoStep = async (req, res) => {
     }
     const user = await User.findOne({ email: email.toLowerCase().trim() })
       .select("+twoStepPin +twoStepEnabled");
-    if (!user)               return res.status(404).json({ message: "Account not found." });
+    if (!user)                return res.status(404).json({ message: "Account not found." });
     if (!user.twoStepEnabled) return res.status(400).json({ message: "Two-step not enabled for this account." });
 
     const match = await bcrypt.compare(String(pin), user.twoStepPin || "");
     if (!match) {
-      // Small delay to deter brute force
       await new Promise((r) => setTimeout(r, 400));
       return res.status(401).json({ message: "Incorrect PIN. Please try again." });
     }
@@ -126,7 +143,8 @@ exports.changePin = async (req, res) => {
     if (!newPin || !/^\d{6}$/.test(String(newPin))) {
       return res.status(400).json({ message: "New PIN must be exactly 6 digits." });
     }
-    const user = await User.findById(req.user._id).select("+twoStepPin");
+    const user = await User.findById(req.user._id)
+      .select("+twoStepPin email pseudonym");
     if (!user) return res.status(404).json({ message: "User not found." });
 
     const matchCurrent = await bcrypt.compare(String(currentPin), user.twoStepPin || "");
@@ -136,8 +154,16 @@ exports.changePin = async (req, res) => {
     if (sameAsOld) {
       return res.status(400).json({ message: "New PIN cannot be the same as your current PIN." });
     }
+
     user.twoStepPin = await hashPin(newPin);
     await user.save({ validateBeforeSave: false });
+
+    // Send notification email — non-fatal
+    sendPinChangedEmail({
+      to:        user.email,
+      pseudonym: user.pseudonym,
+    }).catch((err) => console.error("PIN changed email failed (non-fatal):", err));
+
     return res.json({ message: "PIN updated 💜" });
   } catch (err) {
     return res.status(500).json({ message: err.message });
@@ -155,7 +181,7 @@ exports.recoverTwoStep = async (req, res) => {
       return res.status(400).json({ message: "New PIN must be exactly 6 digits." });
     }
     const user = await User.findOne({ email: email.toLowerCase().trim() })
-      .select("+twoStepRecoveryCode +twoStepRecoveryUsed +twoStepPin +twoStepEnabled");
+      .select("+twoStepRecoveryCode +twoStepRecoveryUsed +twoStepPin +twoStepEnabled pseudonym");
     if (!user || !user.twoStepEnabled) {
       return res.status(404).json({ message: "Account not found or two-step not enabled." });
     }
@@ -172,9 +198,17 @@ exports.recoverTwoStep = async (req, res) => {
       await new Promise((r) => setTimeout(r, 400));
       return res.status(401).json({ message: "Invalid recovery code." });
     }
+
     user.twoStepPin          = await hashPin(newPin);
     user.twoStepRecoveryUsed = true;
     await user.save({ validateBeforeSave: false });
+
+    // Notify that PIN was reset via recovery — non-fatal
+    sendPinChangedEmail({
+      to:        user.email,
+      pseudonym: user.pseudonym,
+    }).catch((err) => console.error("Recovery PIN email failed (non-fatal):", err));
+
     return res.json({ message: "PIN reset successfully 💜 Sign in with your new PIN." });
   } catch (err) {
     return res.status(500).json({ message: err.message });
