@@ -1,9 +1,10 @@
 /**
- * controllers/authController.js — Complete production version
+ * controllers/authController.js — with Login Activity tracking
  *
  * Changes from previous version:
- *   - login() returns twoStep + twoStepHint flags
- *   - Everything else unchanged
+ *   - generateToken now includes sessionId in the JWT payload
+ *   - login() records a LoginActivity entry
+ *   - auth middleware needs updating to expose req.user.sessionId
  */
 
 const jwt  = require("jsonwebtoken");
@@ -14,11 +15,21 @@ const {
   generateSecureToken,
   sendWelcomeEmail,
 } = require("../utils/email");
+const {
+  recordLogin,
+  generateSessionId,
+  getIpAddress,
+} = require("./loginActivityController");
 
-const generateToken = (id, role) =>
-  jwt.sign({ id, role }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRE });
+// ── Token now includes sessionId ───────────────────────────────────────────────
+const generateToken = (id, role, sessionId) =>
+  jwt.sign(
+    { id, role, sessionId },
+    process.env.JWT_SECRET,
+    { expiresIn: process.env.JWT_EXPIRE }
+  );
 
-// ── POST /api/auth/signup ─────────────────────────────────────────────────────
+// ── POST /api/auth/signup ──────────────────────────────────────────────────────
 exports.signup = async (req, res) => {
   try {
     const { pseudonym, email, password } = req.body;
@@ -49,20 +60,21 @@ exports.signup = async (req, res) => {
       email:     email.toLowerCase().trim(),
       password,
       role:      isAdmin ? "admin" : "user",
-      emailVerificationToken: verifyToken,
-      emailVerificationCode:  verifyCode,
+      emailVerificationToken:  verifyToken,
+      emailVerificationCode:   verifyCode,
       emailVerificationExpiry: verifyExpiry,
     });
 
     sendWelcomeEmail({
-      to:          user.email,
-      pseudonym:   user.pseudonym,
+      to:           user.email,
+      pseudonym:    user.pseudonym,
       verifyToken,
       verifyLink,
       sixDigitCode: verifyCode,
     }).catch((err) => console.error("Welcome email failed (non-fatal):", err));
 
-    const token = generateToken(user._id, user.role);
+    const sessionId = generateSessionId();
+    const token     = generateToken(user._id, user.role, sessionId);
 
     return res.status(201).json({
       message: "Account created! Check your email to verify your address.",
@@ -84,11 +96,13 @@ exports.signup = async (req, res) => {
   }
 };
 
-// ── POST /api/auth/login ──────────────────────────────────────────────────────
+// ── POST /api/auth/login ───────────────────────────────────────────────────────
 exports.login = async (req, res) => {
   try {
-    const { email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ message: "All fields are required" });
+    const { email, password, deviceName, deviceOS, appVersion } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ message: "All fields are required" });
+    }
 
     const user = await User.findOne({ email }).select("+password");
     if (!user) return res.status(401).json({ message: "Invalid email or password" });
@@ -96,11 +110,27 @@ exports.login = async (req, res) => {
     const isMatch = await user.matchPassword(password);
     if (!isMatch) return res.status(401).json({ message: "Invalid email or password" });
 
-    // Fetch two-step fields (not selected by default)
+    // Fetch security fields
     const userWithSecurity = await User.findById(user._id)
       .select("twoStepEnabled twoStepHint");
 
-    const token = generateToken(user._id, user.role);
+    // Generate session
+    const sessionId = generateSessionId();
+    const token     = generateToken(user._id, user.role, sessionId);
+    const ipAddress = getIpAddress(req);
+
+    // Record login activity — non-fatal, fires in background
+    // Method is "password" here; if 2FA is required it gets updated
+    // when verifyTwoStep is called
+    recordLogin({
+      userId:     user._id,
+      sessionId,
+      method:     userWithSecurity.twoStepEnabled ? "password+2fa" : "password",
+      deviceName: deviceName || "Unknown device",
+      deviceOS:   deviceOS   || "Unknown OS",
+      appVersion: appVersion || "",
+      ipAddress,
+    });
 
     return res.json({
       message:     user.isBanned ? "Account suspended" : "Welcome back 💜",
@@ -115,10 +145,10 @@ exports.login = async (req, res) => {
         role:                user.role,
         isBanned:            user.isBanned,
         confirmedViolations: user.confirmedViolations || 0,
-        violations:          user.violations || [],
-        appealStatus:        user.appealStatus || "none",
+        violations:          user.violations          || [],
+        appealStatus:        user.appealStatus        || "none",
         showOnlineStatus:    user.showOnlineStatus,
-        bio:                 user.bio || "",
+        bio:                 user.bio                 || "",
       },
     });
   } catch (error) {
@@ -126,19 +156,7 @@ exports.login = async (req, res) => {
   }
 };
 
-// ── GET /api/auth/me ──────────────────────────────────────────────────────────
-exports.getMe = async (req, res) => {
-  try {
-    const user = await User.findById(req.user.id)
-      .select("+showOnlineStatus +isOnline +lastSeen +role");
-    if (!user) return res.status(404).json({ message: "User not found" });
-    return res.json({ user });
-  } catch (error) {
-    return res.status(500).json({ message: error.message });
-  }
-};
-
-// ── GET /api/auth/refresh ─────────────────────────────────────────────────────
+// ── GET /api/auth/refresh ──────────────────────────────────────────────────────
 exports.refreshUser = async (req, res) => {
   try {
     const user = await User.findById(req.user._id).select(
@@ -154,12 +172,12 @@ exports.refreshUser = async (req, res) => {
         role:                user.role,
         isBanned:            user.isBanned,
         confirmedViolations: user.confirmedViolations || 0,
-        violations:          user.violations || [],
-        appealStatus:        user.appealStatus || "none",
+        violations:          user.violations          || [],
+        appealStatus:        user.appealStatus        || "none",
         showOnlineStatus:    user.showOnlineStatus,
         isOnline:            user.isOnline,
         lastSeen:            user.lastSeen,
-        bio:                 user.bio || "",
+        bio:                 user.bio                 || "",
       },
     });
   } catch (error) {
@@ -167,29 +185,41 @@ exports.refreshUser = async (req, res) => {
   }
 };
 
-// ── GET /api/auth/stats ───────────────────────────────────────────────────────
+// ── GET /api/auth/me ───────────────────────────────────────────────────────────
+exports.getMe = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id)
+      .select("+showOnlineStatus +isOnline +lastSeen +role");
+    if (!user) return res.status(404).json({ message: "User not found" });
+    return res.json({ user });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+// ── GET /api/auth/stats ────────────────────────────────────────────────────────
 exports.getUserStats = async (req, res) => {
   try {
-    const Post         = require("../models/Post");
-    const myPosts      = await Post.find({ author: req.user._id });
-    const totalPosts   = myPosts.length;
-    const totalReactions = myPosts.reduce((sum, p) => sum + (Array.isArray(p.reactions) ? p.reactions.length : 0), 0);
-    const totalComments  = myPosts.reduce((sum, p) => sum + (p.comments?.length || 0), 0);
+    const Post           = require("../models/Post");
+    const myPosts        = await Post.find({ author: req.user._id });
+    const totalPosts     = myPosts.length;
+    const totalReactions = myPosts.reduce((s, p) => s + (Array.isArray(p.reactions) ? p.reactions.length : 0), 0);
+    const totalComments  = myPosts.reduce((s, p) => s + (p.comments?.length || 0), 0);
     return res.json({ totalPosts, totalReactions, totalComments });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
 };
 
-// ── GET /api/auth/my-posts ────────────────────────────────────────────────────
+// ── GET /api/auth/my-posts ─────────────────────────────────────────────────────
 exports.getMyPosts = async (req, res) => {
   try {
     const Post = require("../models/Post");
     const posts = await Post.find({ author: req.user._id })
       .sort({ createdAt: -1 }).select("-author");
     const postsWithReactions = posts.map((post) => {
-      const obj       = post.toObject();
-      const reactions = Array.isArray(obj.reactions) ? obj.reactions : [];
+      const obj            = post.toObject();
+      const reactions      = Array.isArray(obj.reactions) ? obj.reactions : [];
       const reactionCounts = {};
       reactions.forEach((r) => { if (r.type) reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1; });
       return { ...obj, reactions, reactionCounts, totalReactions: reactions.length };
@@ -200,7 +230,7 @@ exports.getMyPosts = async (req, res) => {
   }
 };
 
-// ── GET /api/auth/saved-posts ─────────────────────────────────────────────────
+// ── GET /api/auth/saved-posts ──────────────────────────────────────────────────
 exports.getSavedPosts = async (req, res) => {
   try {
     const Post = require("../models/Post");
@@ -209,8 +239,8 @@ exports.getSavedPosts = async (req, res) => {
     const posts = await Post.find({ _id: { $in: user.savedPosts } })
       .sort({ createdAt: -1 }).select("-author");
     const postsWithReactions = posts.map((post) => {
-      const obj       = post.toObject();
-      const reactions = Array.isArray(obj.reactions) ? obj.reactions : [];
+      const obj            = post.toObject();
+      const reactions      = Array.isArray(obj.reactions) ? obj.reactions : [];
       const reactionCounts = {};
       reactions.forEach((r) => { if (r.type) reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1; });
       return { ...obj, reactions, reactionCounts, totalReactions: reactions.length };
@@ -221,7 +251,7 @@ exports.getSavedPosts = async (req, res) => {
   }
 };
 
-// ── PUT /api/auth/presence ────────────────────────────────────────────────────
+// ── PUT /api/auth/presence ─────────────────────────────────────────────────────
 exports.updatePresence = async (req, res) => {
   try {
     await User.findByIdAndUpdate(req.user._id, { isOnline: true, lastSeen: new Date() });
@@ -229,7 +259,7 @@ exports.updatePresence = async (req, res) => {
   } catch (error) { return res.status(500).json({ message: error.message }); }
 };
 
-// ── PUT /api/auth/offline ─────────────────────────────────────────────────────
+// ── PUT /api/auth/offline ──────────────────────────────────────────────────────
 exports.setOffline = async (req, res) => {
   try {
     await User.findByIdAndUpdate(req.user._id, { isOnline: false, lastSeen: new Date() });
@@ -237,7 +267,7 @@ exports.setOffline = async (req, res) => {
   } catch (error) { return res.status(500).json({ message: error.message }); }
 };
 
-// ── PUT /api/auth/online-status-privacy ──────────────────────────────────────
+// ── PUT /api/auth/online-status-privacy ───────────────────────────────────────
 exports.toggleOnlineStatusPrivacy = async (req, res) => {
   try {
     const user = await User.findById(req.user._id);
@@ -245,36 +275,33 @@ exports.toggleOnlineStatusPrivacy = async (req, res) => {
     user.showOnlineStatus = !user.showOnlineStatus;
     await user.save({ validateBeforeSave: false });
     return res.json({
-      message: user.showOnlineStatus ? "Online status is now visible 💜" : "Online status is now hidden",
+      message:          user.showOnlineStatus ? "Online status is now visible 💜" : "Online status is now hidden",
       showOnlineStatus: user.showOnlineStatus,
     });
   } catch (error) { return res.status(500).json({ message: error.message }); }
 };
 
-// ── GET /api/auth/user/:pseudonym ─────────────────────────────────────────────
+// ── GET /api/auth/user/:pseudonym ──────────────────────────────────────────────
 exports.getUserByPseudonym = async (req, res) => {
   try {
     const Post = require("../models/Post");
     const user = await User.findOne({ pseudonym: req.params.pseudonym })
       .select("pseudonym avatar isOnline lastSeen createdAt showOnlineStatus");
     if (!user) return res.status(404).json({ message: "User not found" });
-
     const posts          = await Post.find({ author: user._id });
     const totalPosts     = posts.length;
-    const totalReactions = posts.reduce((sum, p) => sum + (Array.isArray(p.reactions) ? p.reactions.length : 0), 0);
-
+    const totalReactions = posts.reduce((s, p) => s + (Array.isArray(p.reactions) ? p.reactions.length : 0), 0);
     const threeMinutesAgo = new Date(Date.now() - 3 * 60 * 1000);
     const actuallyOnline  = user.isOnline && user.lastSeen > threeMinutesAgo;
     const isOnline        = user.showOnlineStatus ? actuallyOnline : null;
     const lastSeen        = user.showOnlineStatus ? user.lastSeen  : null;
-
     return res.json({
       user: { pseudonym: user.pseudonym, avatar: user.avatar, isOnline, lastSeen, showOnlineStatus: user.showOnlineStatus, joinedAt: user.createdAt, totalPosts, totalReactions },
     });
   } catch (error) { return res.status(500).json({ message: error.message }); }
 };
 
-// ── PATCH /api/auth/clear-reinstated ─────────────────────────────────────────
+// ── PATCH /api/auth/clear-reinstated ──────────────────────────────────────────
 exports.clearReinstatedStatus = async (req, res) => {
   try {
     await User.findByIdAndUpdate(req.user._id, { appealStatus: "none" });
@@ -282,7 +309,7 @@ exports.clearReinstatedStatus = async (req, res) => {
   } catch (e) { res.status(500).json({ message: e.message }); }
 };
 
-// ── GET /api/auth/search ──────────────────────────────────────────────────────
+// ── GET /api/auth/search ───────────────────────────────────────────────────────
 exports.searchUsers = async (req, res) => {
   try {
     const { q } = req.query;
@@ -297,7 +324,7 @@ exports.searchUsers = async (req, res) => {
   } catch (error) { return res.status(500).json({ message: error.message }); }
 };
 
-// ── PUT /api/auth/bio ─────────────────────────────────────────────────────────
+// ── PUT /api/auth/bio ──────────────────────────────────────────────────────────
 exports.updateBio = async (req, res) => {
   try {
     const { bio } = req.body;

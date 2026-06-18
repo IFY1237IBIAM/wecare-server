@@ -1,4 +1,11 @@
-const jwt = require("jsonwebtoken");
+/**
+ * middleware/auth.js — Updated to expose sessionId, matching your existing structure
+ *
+ * Your existing exports.protect and exports.adminOnly pattern is preserved.
+ * Only change: req.user now includes sessionId from the JWT payload.
+ */
+
+const jwt  = require("jsonwebtoken");
 const User = require("../models/User");
 
 exports.protect = async (req, res, next) => {
@@ -13,16 +20,14 @@ exports.protect = async (req, res, next) => {
     const user = await User.findById(decoded.id);
     if (!user) return res.status(401).json({ message: "User no longer exists" });
 
-    // Remove this line - let routes handle banned users
-    // if (user.isBanned) return res.status(403).json({ message: "Account suspended" });
-
     req.user = {
-      _id: user._id,
-      id: user._id.toString(),
-      pseudonym: user.pseudonym,
-      email: user.email,
-      role: user.role,
-      isBanned: user.isBanned // pass it through so routes can check
+      _id:        user._id,
+      id:         user._id.toString(),
+      pseudonym:  user.pseudonym,
+      email:      user.email,
+      role:       user.role,
+      isBanned:   user.isBanned,
+      sessionId:  decoded.sessionId || null,   // ← NEW: from JWT payload
     };
 
     next();
@@ -32,7 +37,7 @@ exports.protect = async (req, res, next) => {
 };
 
 exports.adminOnly = (req, res, next) => {
-  if (req.user?.role!== "admin" && req.user?.role!== "moderator") {
+  if (req.user?.role !== "admin" && req.user?.role !== "moderator") {
     return res.status(403).json({ message: "Admin access required" });
   }
   next();

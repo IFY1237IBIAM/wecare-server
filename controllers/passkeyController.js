@@ -18,6 +18,12 @@ const {
   sendPasskeyDeletedEmail,
 } = require("../utils/email");
 
+const {
+  recordLogin,
+  generateSessionId,
+  getIpAddress,
+} = require("./loginActivityController");
+
 const RP_ID   = process.env.PASSKEY_RP_ID   || "wecare-backend-anxl.onrender.com";
 const RP_NAME = process.env.PASSKEY_RP_NAME || "HushCircle";
 
@@ -29,8 +35,18 @@ if (process.env.PASSKEY_ORIGINS) {
     .filter(Boolean);
 }
 
-const generateToken = (id, role) =>
-  jwt.sign({ id, role }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRE });
+const generateToken = (id, role, sessionId) =>
+  jwt.sign(
+    {
+      id,
+      role,
+      sessionId,
+    },
+    process.env.JWT_SECRET,
+    {
+      expiresIn: process.env.JWT_EXPIRE,
+    }
+  );
 
 const challengeStore = new Map();
 
@@ -314,8 +330,24 @@ exports.verifyAuthentication = async (req, res) => {
       lastUsedAt: new Date(),
     });
 
-    const token = generateToken(user._id, user.role);
-    return res.json({
+    const sessionId = generateSessionId();
+
+const token = generateToken(
+  user._id,
+  user.role,
+  sessionId
+);
+
+await recordLogin({
+  userId: user._id,
+  sessionId,
+  method: "passkey",
+  deviceName: req.body.deviceName || "Unknown device",
+  deviceOS: req.body.deviceOS || "Unknown OS",
+  ipAddress: getIpAddress(req),
+});
+
+return res.json({
       message: "Signed in with passkey 💜",
       token,
       user: {

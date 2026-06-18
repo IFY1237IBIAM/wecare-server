@@ -14,6 +14,7 @@ const morgan  = require("morgan");
 const User = require("./models/User");
 require("./models/GroupAuditLog");
 require("./models/GroupReport");
+require("./models/LoginActivity");
 
 const emailRoutes = require("./routes/emailRoutes");
 
@@ -128,6 +129,7 @@ app.use("/api/appeals",       require("./routes/appealRoutes"));
 app.use("/api/settings",      require("./routes/settingsRoutes"));
 app.use("/api/passkey",       require("./routes/passkeyRoutes"));   // ← passkeys
 app.use("/api/two-step",      require("./routes/twoStepRoutes"));   // ← two-step PIN
+app.use("/api/activity", require("./routes/loginActivityRoutes"));
 app.use("/api/email",         emailRoutes);
 
 // ─────────────────────────────────────────────────────────────────────────────
