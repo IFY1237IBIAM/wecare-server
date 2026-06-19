@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const { protect } = require("../middleware/authMiddleware");
 const CheckIn = require("../models/CheckIn");
-const NotificationToken = require("../models/NotificationToken"); // multi-device token store
+const NotificationToken = require("../models/NotificationToken");
 const { Expo } = require("expo-server-sdk");
 
 const expo = new Expo();
@@ -11,33 +11,45 @@ const expo = new Expo();
 const MILESTONES = [3, 7, 14, 30, 60, 100];
 
 const MILESTONE_MESSAGES = {
-  3: {
-    title: "3-Day Streak 🌱",
-    body: "You've checked in 3 days in a row. Small steps matter — keep going 💜",
-  },
-  7: {
-    title: "One Week Strong 🔥",
-    body: "7 days of showing up for yourself. That's a whole week of courage. You're doing amazing 💜",
-  },
-  14: {
-    title: "Two Weeks! 💪",
-    body: "14 days straight. You've made checking in a real habit. HushCircle is proud of you 💜",
-  },
-  30: {
-    title: "30-Day Milestone 🌟",
-    body: "A full month of daily check-ins. That's extraordinary self-care. You should feel proud 💜",
-  },
-  60: {
-    title: "60 Days — You're Unstoppable 🚀",
-    body: "Two months of showing up for yourself every single day. This community is so lucky to have you 💜",
-  },
-  100: {
-    title: "100 Days! 👑 Legendary",
-    body: "ONE HUNDRED days. You are an inspiration. Thank you for being part of HushCircle 💜",
-  },
+  3:   { title: "3-Day Streak 🌱",            body: "You've checked in 3 days in a row. Small steps matter — keep going 💜" },
+  7:   { title: "One Week Strong 🔥",          body: "7 days of showing up for yourself. That's a whole week of courage. You're doing amazing 💜" },
+  14:  { title: "Two Weeks! 💪",                body: "14 days straight. You've made checking in a real habit. HushCircle is proud of you 💜" },
+  30:  { title: "30-Day Milestone 🌟",          body: "A full month of daily check-ins. That's extraordinary self-care. You should feel proud 💜" },
+  60:  { title: "60 Days — You're Unstoppable 🚀", body: "Two months of showing up for yourself every single day. This community is so lucky to have you 💜" },
+  100: { title: "100 Days! 👑 Legendary",       body: "ONE HUNDRED days. You are an inspiration. Thank you for being part of HushCircle 💜" },
 };
 
-// ─── Send push notification helper ──────────────────────────────────────────
+// ─── Date helpers ─────────────────────────────────────────────────────────────
+// CRITICAL: never use `new Date().toISOString().split("T")[0]` for "today" —
+// toISOString() always converts to UTC, which silently shifts the calendar
+// day for any user not in UTC. That mismatch is what was breaking streaks:
+// a check-in made at 11pm local time could land on "tomorrow" in UTC, or one
+// made at 1am local could land on "yesterday" — breaking the consecutive-day
+// chain even though the user checked in every real calendar day.
+//
+// Fix: trust the device's local date string sent from the frontend
+// (YYYY-MM-DD, computed with toLocaleDateString or similar — NOT toISOString).
+// Fall back to server UTC date only if the client didn't send one (legacy
+// app versions), so nothing breaks for users who haven't updated yet.
+
+function isValidDateString(str) {
+  return typeof str === "string" && /^\d{4}-\d{2}-\d{2}$/.test(str);
+}
+
+function serverUTCDateFallback() {
+  return new Date().toISOString().split("T")[0];
+}
+
+function addDays(dateStr, delta) {
+  // Pure string-based date math — avoids re-introducing timezone bugs
+  // by parsing as UTC noon (never crosses a day boundary from DST/offset).
+  const d = new Date(`${dateStr}T12:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + delta);
+  return d.toISOString().split("T")[0];
+}
+
+// ─── Push notification helper ────────────────────────────────────────────────
+
 async function sendStreakPushNotification(userId, milestone) {
   try {
     const msg = MILESTONE_MESSAGES[milestone];
@@ -53,22 +65,18 @@ async function sendStreakPushNotification(userId, milestone) {
     if (!validTokens.length) return;
 
     const messages = validTokens.map((token) => ({
-      to:       token,
-      sound:    "default",
-      title:    msg.title,
-      body:     msg.body,
-      data:     { type: "streak_milestone", milestone, screen: "CheckIn" },
+      to: token,
+      sound: "default",
+      title: msg.title,
+      body: msg.body,
+      data: { type: "streak_milestone", milestone, screen: "CheckIn" },
       priority: "high",
     }));
 
-    // ── Chunk properly so Expo doesn't silently drop large batches ────────
     const chunks = expo.chunkPushNotifications(messages);
     for (const chunk of chunks) {
-      try {
-        await expo.sendPushNotificationsAsync(chunk);
-      } catch (e) {
-        console.log("Streak push chunk error:", e.message);
-      }
+      try { await expo.sendPushNotificationsAsync(chunk); }
+      catch (e) { console.log("Streak push chunk error:", e.message); }
     }
 
     console.log(`✅ Streak milestone (${milestone} days) sent to ${validTokens.length} device(s) for user ${userId}`);
@@ -77,35 +85,40 @@ async function sendStreakPushNotification(userId, milestone) {
   }
 }
 
-// ─── Calculate streak from sorted date array ─────────────────────────────────
+// ─── Streak calculation ───────────────────────────────────────────────────────
+// dates param: array of "YYYY-MM-DD" strings, sorted newest → oldest.
+// referenceToday: the LOCAL today string sent by the client, used to decide
+// whether the most recent check-in is "today" or "yesterday" (still active)
+// or older (streak broken).
 
-function calcStreaks(dates) {
+function calcStreaks(dates, referenceToday) {
   if (!dates.length) return { currentStreak: 0, longestStreak: 0 };
 
-  const today = new Date().toISOString().slice(0, 10);
-  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  const today     = referenceToday;
+  const yesterday = addDays(referenceToday, -1);
 
-  // Current streak
+  // Current streak — only counts if the most recent check-in is today or yesterday
   let currentStreak = 0;
-  let checkDate = dates[0] === today || dates[0] === yesterday ? dates[0] : null;
+  let checkDate = (dates[0] === today || dates[0] === yesterday) ? dates[0] : null;
+
   if (checkDate) {
     currentStreak = 1;
     for (let i = 1; i < dates.length; i++) {
-      const prev = new Date(checkDate);
-      prev.setDate(prev.getDate() - 1);
-      const prevStr = prev.toISOString().slice(0, 10);
-      if (dates[i] === prevStr) { currentStreak++; checkDate = prevStr; }
-      else break;
+      const expectedPrev = addDays(checkDate, -1);
+      if (dates[i] === expectedPrev) {
+        currentStreak++;
+        checkDate = expectedPrev;
+      } else {
+        break;
+      }
     }
   }
 
-  // Longest streak
+  // Longest streak — pure consecutive-day counting through full history
   let longestStreak = dates.length ? 1 : 0;
   let running = 1;
   for (let i = 1; i < dates.length; i++) {
-    const prev = new Date(dates[i - 1]);
-    prev.setDate(prev.getDate() - 1);
-    if (dates[i] === prev.toISOString().slice(0, 10)) {
+    if (dates[i] === addDays(dates[i - 1], -1)) {
       running++;
       longestStreak = Math.max(longestStreak, running);
     } else {
@@ -117,13 +130,17 @@ function calcStreaks(dates) {
 }
 
 // ─── POST /api/checkin ────────────────────────────────────────────────────────
+// Body: { mood, note, localDate }
+// localDate = client's local YYYY-MM-DD (e.g. from `new Date().toLocaleDateString()`
+// reformatted, or a date library). This is the single source of truth for
+// "what day is it for this user right now" — never derived from server UTC.
 
 router.post("/", protect, async (req, res) => {
   try {
-    const { mood, note } = req.body;
+    const { mood, note, localDate } = req.body;
     if (!mood) return res.status(400).json({ message: "Mood is required" });
 
-    const today = new Date().toISOString().split("T")[0];
+    const today = isValidDateString(localDate) ? localDate : serverUTCDateFallback();
 
     const existing = await CheckIn.findOne({ user: req.user._id, date: today });
     if (existing) {
@@ -141,19 +158,15 @@ router.post("/", protect, async (req, res) => {
       date: today,
     });
 
-    // ── Calculate new streak after this check-in ──────────────────────────
     const allCheckIns = await CheckIn.find({ user: req.user._id })
       .sort({ date: -1 })
       .select("date");
 
     const dates = allCheckIns.map((c) => c.date);
-    const { currentStreak, longestStreak } = calcStreaks(dates);
+    const { currentStreak, longestStreak } = calcStreaks(dates, today);
 
-    // ── Fire push notification if this hit a milestone ────────────────────
-    // Only notify if TODAY's streak exactly equals a milestone (not on re-fetch)
     const hitMilestone = MILESTONES.includes(currentStreak);
     if (hitMilestone) {
-      // Fire and forget — don't await so check-in response is instant
       sendStreakPushNotification(req.user._id, currentStreak);
     }
 
@@ -173,10 +186,14 @@ router.post("/", protect, async (req, res) => {
 });
 
 // ─── GET /api/checkin/today ───────────────────────────────────────────────────
+// Query: ?localDate=YYYY-MM-DD — client tells the server what "today" means
+// for it. Falls back to server UTC date if not provided (legacy clients).
 
 router.get("/today", protect, async (req, res) => {
   try {
-    const today = new Date().toISOString().split("T")[0];
+    const { localDate } = req.query;
+    const today = isValidDateString(localDate) ? localDate : serverUTCDateFallback();
+
     const checkIn = await CheckIn.findOne({ user: req.user._id, date: today });
     return res.json({ checkIn: checkIn || null, today });
   } catch (error) {
@@ -185,23 +202,43 @@ router.get("/today", protect, async (req, res) => {
 });
 
 // ─── GET /api/checkin/history ─────────────────────────────────────────────────
+// Query: ?page=1&limit=10 — paginated history, newest first.
 
 router.get("/history", protect, async (req, res) => {
   try {
-    const history = await CheckIn.find({ user: req.user._id })
-      .sort({ date: -1 })
-      .limit(30);
-    // Note: frontend expects `checkIns` key
-    return res.json({ checkIns: history });
+    const page  = Math.max(parseInt(req.query.page) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 10, 1), 50);
+    const skip  = (page - 1) * limit;
+
+    const [history, total] = await Promise.all([
+      CheckIn.find({ user: req.user._id })
+        .sort({ date: -1 })
+        .skip(skip)
+        .limit(limit),
+      CheckIn.countDocuments({ user: req.user._id }),
+    ]);
+
+    return res.json({
+      checkIns: history,
+      page,
+      limit,
+      total,
+      hasMore: skip + history.length < total,
+    });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
 });
 
 // ─── GET /api/checkin/streak ──────────────────────────────────────────────────
+// Query: ?localDate=YYYY-MM-DD — same as /today, needed so the streak shown
+// here always agrees with what /today and POST / would compute.
 
 router.get("/streak", protect, async (req, res) => {
   try {
+    const { localDate } = req.query;
+    const today = isValidDateString(localDate) ? localDate : serverUTCDateFallback();
+
     const checkIns = await CheckIn.find({ user: req.user._id })
       .sort({ date: -1 })
       .select("date mood");
@@ -211,7 +248,7 @@ router.get("/streak", protect, async (req, res) => {
     }
 
     const dates = checkIns.map((c) => c.date);
-    const { currentStreak, longestStreak } = calcStreaks(dates);
+    const { currentStreak, longestStreak } = calcStreaks(dates, today);
 
     return res.json({ currentStreak, longestStreak, totalDays: checkIns.length });
   } catch (error) {
