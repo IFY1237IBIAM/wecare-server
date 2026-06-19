@@ -216,7 +216,7 @@ exports.recoverTwoStep = async (req, res) => {
       pseudonym: user.pseudonym,
     }).catch((err) => console.error("Recovery PIN email failed (non-fatal):", err));
 
-    return res.json({ message: "PIN reset successfully 💜 Sign in with your new PIN." });
+    return res.json({ message: "PIN reset successfully 💜 Sign in now with your new PIN." });
   } catch (err) {
     return res.status(500).json({ message: err.message });
   }
