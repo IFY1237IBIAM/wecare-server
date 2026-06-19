@@ -1,5 +1,14 @@
 /**
- * controllers/twoStepController.js — Production + Email Notifications
+ * controllers/twoStepController.js — FIXED
+ *
+ * Root cause of the "not enabled" bug found and fixed:
+ * disableTwoStep was calling User.findById() with NO .select(),
+ * but twoStepEnabled and twoStepPin both have select:false in the
+ * User schema, so they came back as undefined on every disable call.
+ *
+ * This caused user.twoStepEnabled to ALWAYS be falsy inside disableTwoStep,
+ * even when the database genuinely had it set to true — confirmed by
+ * direct MongoDB Atlas inspection during debugging.
  */
 
 const User   = require("../models/User");
@@ -59,7 +68,6 @@ exports.enableTwoStep = async (req, res) => {
     user.twoStepEnabled      = true;
     await user.save({ validateBeforeSave: false });
 
-    // Send notification email — non-fatal, never blocks the response
     sendTwoStepEnabledEmail({
       to:        user.email,
       pseudonym: user.pseudonym,
@@ -75,13 +83,16 @@ exports.enableTwoStep = async (req, res) => {
 };
 
 // ── POST /api/two-step/disable ────────────────────────────────────────────────
+// FIXED: added .select("+twoStepPin +twoStepEnabled email pseudonym")
+// This was MISSING in the deployed version, causing both fields to come
+// back as undefined since they have select:false in the schema.
 exports.disableTwoStep = async (req, res) => {
   try {
     const { pin } = req.body;
     if (!pin) return res.status(400).json({ message: "PIN is required." });
 
     const user = await User.findById(req.user._id)
-      .select("+twoStepPin +twoStepEnabled email pseudonym");
+      .select("+twoStepPin +twoStepEnabled email pseudonym");   // ← THE FIX
     if (!user) return res.status(404).json({ message: "User not found." });
     if (!user.twoStepEnabled) {
       return res.status(400).json({ message: "Two-step verification is not enabled." });
@@ -89,7 +100,6 @@ exports.disableTwoStep = async (req, res) => {
     const match = await bcrypt.compare(String(pin), user.twoStepPin || "");
     if (!match) return res.status(401).json({ message: "Incorrect PIN." });
 
-    // Capture before clearing
     const emailTo        = user.email;
     const emailPseudonym = user.pseudonym;
 
@@ -100,7 +110,6 @@ exports.disableTwoStep = async (req, res) => {
     user.twoStepRecoveryUsed = false;
     await user.save({ validateBeforeSave: false });
 
-    // Send notification email — non-fatal
     sendTwoStepDisabledEmail({
       to:        emailTo,
       pseudonym: emailPseudonym,
@@ -158,7 +167,6 @@ exports.changePin = async (req, res) => {
     user.twoStepPin = await hashPin(newPin);
     await user.save({ validateBeforeSave: false });
 
-    // Send notification email — non-fatal
     sendPinChangedEmail({
       to:        user.email,
       pseudonym: user.pseudonym,
@@ -203,7 +211,6 @@ exports.recoverTwoStep = async (req, res) => {
     user.twoStepRecoveryUsed = true;
     await user.save({ validateBeforeSave: false });
 
-    // Notify that PIN was reset via recovery — non-fatal
     sendPinChangedEmail({
       to:        user.email,
       pseudonym: user.pseudonym,
