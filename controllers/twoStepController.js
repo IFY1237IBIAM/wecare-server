@@ -1,14 +1,11 @@
 /**
- * controllers/twoStepController.js — FIXED
+ * controllers/twoStepController.js — WITH TEMPORARY DEBUG LOGGING
  *
- * Root cause of the "not enabled" bug found and fixed:
- * disableTwoStep was calling User.findById() with NO .select(),
- * but twoStepEnabled and twoStepPin both have select:false in the
- * User schema, so they came back as undefined on every disable call.
+ * This version adds console.log statements inside disableTwoStep
+ * so we can see EXACTLY what Render receives and what Mongoose returns,
+ * directly in the Render logs in real time.
  *
- * This caused user.twoStepEnabled to ALWAYS be falsy inside disableTwoStep,
- * even when the database genuinely had it set to true — confirmed by
- * direct MongoDB Atlas inspection during debugging.
+ * REMOVE the console.log lines once the bug is confirmed fixed.
  */
 
 const User   = require("../models/User");
@@ -83,21 +80,35 @@ exports.enableTwoStep = async (req, res) => {
 };
 
 // ── POST /api/two-step/disable ────────────────────────────────────────────────
-// FIXED: added .select("+twoStepPin +twoStepEnabled email pseudonym")
-// This was MISSING in the deployed version, causing both fields to come
-// back as undefined since they have select:false in the schema.
 exports.disableTwoStep = async (req, res) => {
+  console.log("🔍 DEBUG disableTwoStep CALLED");
+  console.log("🔍 req.user._id:", req.user._id);
+  console.log("🔍 req.user.id:", req.user.id);
+  console.log("🔍 req.body.pin:", req.body.pin);
+
   try {
     const { pin } = req.body;
     if (!pin) return res.status(400).json({ message: "PIN is required." });
 
     const user = await User.findById(req.user._id)
-      .select("+twoStepPin +twoStepEnabled email pseudonym");   // ← THE FIX
+      .select("+twoStepPin +twoStepEnabled email pseudonym");
+
+    console.log("🔍 user found:", !!user);
+    console.log("🔍 user._id:", user?._id);
+    console.log("🔍 user.email:", user?.email);
+    console.log("🔍 user.twoStepEnabled (raw):", user?.twoStepEnabled);
+    console.log("🔍 typeof user.twoStepEnabled:", typeof user?.twoStepEnabled);
+    console.log("🔍 user.twoStepPin exists:", !!user?.twoStepPin);
+    console.log("🔍 FULL user object:", JSON.stringify(user, null, 2));
+
     if (!user) return res.status(404).json({ message: "User not found." });
     if (!user.twoStepEnabled) {
+      console.log("🔍 BLOCKED HERE — user.twoStepEnabled was falsy:", user.twoStepEnabled);
       return res.status(400).json({ message: "Two-step verification is not enabled." });
     }
+
     const match = await bcrypt.compare(String(pin), user.twoStepPin || "");
+    console.log("🔍 PIN match result:", match);
     if (!match) return res.status(401).json({ message: "Incorrect PIN." });
 
     const emailTo        = user.email;
@@ -117,6 +128,7 @@ exports.disableTwoStep = async (req, res) => {
 
     return res.json({ message: "Two-step verification disabled." });
   } catch (err) {
+    console.log("🔍 EXCEPTION in disableTwoStep:", err.message);
     return res.status(500).json({ message: err.message });
   }
 };
@@ -216,7 +228,7 @@ exports.recoverTwoStep = async (req, res) => {
       pseudonym: user.pseudonym,
     }).catch((err) => console.error("Recovery PIN email failed (non-fatal):", err));
 
-    return res.json({ message: "PIN reset successfully 💜 Sign in now with your new PIN." });
+    return res.json({ message: "PIN reset successfully 💜 Sign in with your new PIN." });
   } catch (err) {
     return res.status(500).json({ message: err.message });
   }
