@@ -1,6 +1,6 @@
 # Debug script v2 - properly captures HTTP error response body
 $BASE     = "https://wecare-backend-anxl.onrender.com/api"
-$EMAIL    = "ibbcodezone@gmail.com"
+$EMAIL    = "mom@gmail.com"
 $PASSWORD = "INTERCORe1237#"
 
 $headers = @{ "Content-Type" = "application/json" }

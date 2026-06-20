@@ -1,16 +1,15 @@
 /**
- * controllers/twoStepController.js — WITH TEMPORARY DEBUG LOGGING
+ * controllers/twoStepController.js — DEBUG v2
  *
- * This version adds console.log statements inside disableTwoStep
- * so we can see EXACTLY what Render receives and what Mongoose returns,
- * directly in the Render logs in real time.
- *
- * REMOVE the console.log lines once the bug is confirmed fixed.
+ * Adds a RAW MongoDB query (bypassing Mongoose schema entirely)
+ * right alongside the normal Mongoose query, so we can compare
+ * them side by side and see exactly where the field disappears.
  */
 
-const User   = require("../models/User");
-const bcrypt = require("bcryptjs");
-const crypto = require("crypto");
+const User      = require("../models/User");
+const mongoose  = require("mongoose");
+const bcrypt    = require("bcryptjs");
+const crypto    = require("crypto");
 const {
   sendTwoStepEnabledEmail,
   sendTwoStepDisabledEmail,
@@ -25,7 +24,6 @@ const hashPin = async (pin) => {
 const generateRecoveryCode = () =>
   crypto.randomBytes(5).toString("hex").toUpperCase();
 
-// ── GET /api/two-step/status ──────────────────────────────────────────────────
 exports.getTwoStepStatus = async (req, res) => {
   try {
     const user = await User.findById(req.user._id).select(
@@ -43,7 +41,6 @@ exports.getTwoStepStatus = async (req, res) => {
   }
 };
 
-// ── POST /api/two-step/enable ─────────────────────────────────────────────────
 exports.enableTwoStep = async (req, res) => {
   try {
     const { pin, hint } = req.body;
@@ -79,36 +76,57 @@ exports.enableTwoStep = async (req, res) => {
   }
 };
 
-// ── POST /api/two-step/disable ────────────────────────────────────────────────
+// ── POST /api/two-step/disable — WITH RAW MONGODB COMPARISON ──────────────────
 exports.disableTwoStep = async (req, res) => {
-  console.log("🔍 DEBUG disableTwoStep CALLED");
-  console.log("🔍 req.user._id:", req.user._id);
-  console.log("🔍 req.user.id:", req.user.id);
-  console.log("🔍 req.body.pin:", req.body.pin);
+  console.log("🔍🔍🔍 DEBUG v2 disableTwoStep CALLED");
 
   try {
     const { pin } = req.body;
     if (!pin) return res.status(400).json({ message: "PIN is required." });
 
+    // ── Query 1: Normal Mongoose query (what the controller normally does) ──
     const user = await User.findById(req.user._id)
       .select("+twoStepPin +twoStepEnabled email pseudonym");
 
-    console.log("🔍 user found:", !!user);
-    console.log("🔍 user._id:", user?._id);
-    console.log("🔍 user.email:", user?.email);
-    console.log("🔍 user.twoStepEnabled (raw):", user?.twoStepEnabled);
-    console.log("🔍 typeof user.twoStepEnabled:", typeof user?.twoStepEnabled);
-    console.log("🔍 user.twoStepPin exists:", !!user?.twoStepPin);
-    console.log("🔍 FULL user object:", JSON.stringify(user, null, 2));
+    console.log("🔍 [MONGOOSE] twoStepEnabled:", user?.twoStepEnabled);
+    console.log("🔍 [MONGOOSE] typeof:", typeof user?.twoStepEnabled);
+
+    // ── Query 2: RAW MongoDB driver query — bypasses Mongoose schema entirely ──
+    const rawDoc = await mongoose.connection.db
+      .collection("users")
+      .findOne({ _id: new mongoose.Types.ObjectId(req.user._id) });
+
+    console.log("🔍 [RAW MONGODB] twoStepEnabled:", rawDoc?.twoStepEnabled);
+    console.log("🔍 [RAW MONGODB] typeof:", typeof rawDoc?.twoStepEnabled);
+    console.log("🔍 [RAW MONGODB] all keys:", Object.keys(rawDoc || {}));
+
+    // ── Query 3: Mongoose with .lean() — bypasses getters/virtuals ──
+    const leanUser = await User.findById(req.user._id)
+      .select("+twoStepPin +twoStepEnabled email pseudonym")
+      .lean();
+
+    console.log("🔍 [LEAN] twoStepEnabled:", leanUser?.twoStepEnabled);
+    console.log("🔍 [LEAN] typeof:", typeof leanUser?.twoStepEnabled);
 
     if (!user) return res.status(404).json({ message: "User not found." });
-    if (!user.twoStepEnabled) {
-      console.log("🔍 BLOCKED HERE — user.twoStepEnabled was falsy:", user.twoStepEnabled);
-      return res.status(400).json({ message: "Two-step verification is not enabled." });
+
+    // Use the RAW value as the source of truth for this debug test
+    const actualEnabled = rawDoc?.twoStepEnabled;
+
+    if (!actualEnabled) {
+      console.log("🔍 BLOCKED — even raw MongoDB shows falsy:", actualEnabled);
+      return res.status(400).json({
+        message: "Two-step verification is not enabled.",
+        debug: {
+          mongooseValue: user.twoStepEnabled,
+          rawValue: rawDoc?.twoStepEnabled,
+          leanValue: leanUser?.twoStepEnabled,
+        },
+      });
     }
 
-    const match = await bcrypt.compare(String(pin), user.twoStepPin || "");
-    console.log("🔍 PIN match result:", match);
+    const match = await bcrypt.compare(String(pin), user.twoStepPin || rawDoc?.twoStepPin || "");
+    console.log("🔍 PIN match:", match);
     if (!match) return res.status(401).json({ message: "Incorrect PIN." });
 
     const emailTo        = user.email;
@@ -128,12 +146,11 @@ exports.disableTwoStep = async (req, res) => {
 
     return res.json({ message: "Two-step verification disabled." });
   } catch (err) {
-    console.log("🔍 EXCEPTION in disableTwoStep:", err.message);
+    console.log("🔍 EXCEPTION:", err.message);
     return res.status(500).json({ message: err.message });
   }
 };
 
-// ── POST /api/two-step/verify  (no auth — pre-login) ─────────────────────────
 exports.verifyTwoStep = async (req, res) => {
   try {
     const { pin, email } = req.body;
@@ -156,7 +173,6 @@ exports.verifyTwoStep = async (req, res) => {
   }
 };
 
-// ── POST /api/two-step/change-pin ─────────────────────────────────────────────
 exports.changePin = async (req, res) => {
   try {
     const { currentPin, newPin } = req.body;
@@ -190,7 +206,6 @@ exports.changePin = async (req, res) => {
   }
 };
 
-// ── POST /api/two-step/recover  (no auth — locked-out user) ──────────────────
 exports.recoverTwoStep = async (req, res) => {
   try {
     const { email, recoveryCode, newPin } = req.body;
