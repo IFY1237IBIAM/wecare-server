@@ -20,18 +20,6 @@ const MILESTONE_MESSAGES = {
 };
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
-// CRITICAL: never use `new Date().toISOString().split("T")[0]` for "today" —
-// toISOString() always converts to UTC, which silently shifts the calendar
-// day for any user not in UTC. That mismatch is what was breaking streaks:
-// a check-in made at 11pm local time could land on "tomorrow" in UTC, or one
-// made at 1am local could land on "yesterday" — breaking the consecutive-day
-// chain even though the user checked in every real calendar day.
-//
-// Fix: trust the device's local date string sent from the frontend
-// (YYYY-MM-DD, computed with toLocaleDateString or similar — NOT toISOString).
-// Fall back to server UTC date only if the client didn't send one (legacy
-// app versions), so nothing breaks for users who haven't updated yet.
-
 function isValidDateString(str) {
   return typeof str === "string" && /^\d{4}-\d{2}-\d{2}$/.test(str);
 }
@@ -41,8 +29,6 @@ function serverUTCDateFallback() {
 }
 
 function addDays(dateStr, delta) {
-  // Pure string-based date math — avoids re-introducing timezone bugs
-  // by parsing as UTC noon (never crosses a day boundary from DST/offset).
   const d = new Date(`${dateStr}T12:00:00.000Z`);
   d.setUTCDate(d.getUTCDate() + delta);
   return d.toISOString().split("T")[0];
@@ -86,10 +72,6 @@ async function sendStreakPushNotification(userId, milestone) {
 }
 
 // ─── Streak calculation ───────────────────────────────────────────────────────
-// dates param: array of "YYYY-MM-DD" strings, sorted newest → oldest.
-// referenceToday: the LOCAL today string sent by the client, used to decide
-// whether the most recent check-in is "today" or "yesterday" (still active)
-// or older (streak broken).
 
 function calcStreaks(dates, referenceToday) {
   if (!dates.length) return { currentStreak: 0, longestStreak: 0 };
@@ -97,7 +79,6 @@ function calcStreaks(dates, referenceToday) {
   const today     = referenceToday;
   const yesterday = addDays(referenceToday, -1);
 
-  // Current streak — only counts if the most recent check-in is today or yesterday
   let currentStreak = 0;
   let checkDate = (dates[0] === today || dates[0] === yesterday) ? dates[0] : null;
 
@@ -114,7 +95,6 @@ function calcStreaks(dates, referenceToday) {
     }
   }
 
-  // Longest streak — pure consecutive-day counting through full history
   let longestStreak = dates.length ? 1 : 0;
   let running = 1;
   for (let i = 1; i < dates.length; i++) {
@@ -130,10 +110,6 @@ function calcStreaks(dates, referenceToday) {
 }
 
 // ─── POST /api/checkin ────────────────────────────────────────────────────────
-// Body: { mood, note, localDate }
-// localDate = client's local YYYY-MM-DD (e.g. from `new Date().toLocaleDateString()`
-// reformatted, or a date library). This is the single source of truth for
-// "what day is it for this user right now" — never derived from server UTC.
 
 router.post("/", protect, async (req, res) => {
   try {
@@ -186,8 +162,6 @@ router.post("/", protect, async (req, res) => {
 });
 
 // ─── GET /api/checkin/today ───────────────────────────────────────────────────
-// Query: ?localDate=YYYY-MM-DD — client tells the server what "today" means
-// for it. Falls back to server UTC date if not provided (legacy clients).
 
 router.get("/today", protect, async (req, res) => {
   try {
@@ -202,7 +176,6 @@ router.get("/today", protect, async (req, res) => {
 });
 
 // ─── GET /api/checkin/history ─────────────────────────────────────────────────
-// Query: ?page=1&limit=10 — paginated history, newest first.
 
 router.get("/history", protect, async (req, res) => {
   try {
@@ -231,8 +204,6 @@ router.get("/history", protect, async (req, res) => {
 });
 
 // ─── GET /api/checkin/streak ──────────────────────────────────────────────────
-// Query: ?localDate=YYYY-MM-DD — same as /today, needed so the streak shown
-// here always agrees with what /today and POST / would compute.
 
 router.get("/streak", protect, async (req, res) => {
   try {
@@ -252,6 +223,142 @@ router.get("/streak", protect, async (req, res) => {
 
     return res.json({ currentStreak, longestStreak, totalDays: checkIns.length });
   } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+// ─── GET /api/checkin/circle-pulse ───────────────────────────────────────────
+// Query: ?localDate=YYYY-MM-DD
+//
+// For each circle (Group) the requesting user belongs to, aggregates today's
+// anonymous check-in moods from all members who checked in.
+// Returns an array of pulse cards — one per circle that has at least one
+// check-in today — sorted by totalCheckIns descending.
+//
+// Response shape:
+// {
+//   pulses: [
+//     {
+//       groupId:        string,
+//       groupName:      string,
+//       groupIcon:      string,
+//       totalCheckIns:  number,
+//       dominantMood:   string,   // mood key with highest count
+//       moodCounts: {             // only moods with count > 0
+//         hope: 3, calm: 1, ...
+//       }
+//     },
+//     ...
+//   ]
+// }
+//
+// Privacy: no user IDs, pseudonyms, or notes are ever returned — only
+// aggregate counts per mood per group.
+
+router.get("/circle-pulse", protect, async (req, res) => {
+  try {
+    const { localDate } = req.query;
+    const today = isValidDateString(localDate) ? localDate : serverUTCDateFallback();
+
+    // Lazy-require Group here to avoid a circular-dependency risk if this
+    // router is loaded before the Group model is registered.
+    const Group = require("../models/Group");
+
+    // Find every group this user is a member of.
+    // Group.members is an array of ObjectIds (or embedded docs with a user field —
+    // we handle both shapes below).
+    const groups = await Group.find({ members: req.user._id })
+      .select("_id name icon members")
+      .lean();
+
+    if (!groups.length) {
+      return res.json({ pulses: [] });
+    }
+
+    // Build a map: groupId → { groupName, groupIcon, memberIds[] }
+    const groupMap = {};
+    for (const g of groups) {
+      // members[] can be an array of ObjectIds OR embedded objects with a
+      // `user` field (e.g. { user: ObjectId, role: "..." }).
+      // Normalise to a flat array of ObjectId strings.
+      const memberIds = (g.members || []).map((m) =>
+        m && typeof m === "object" && m.user ? m.user : m
+      );
+      groupMap[g._id.toString()] = {
+        groupName: g.name,
+        groupIcon: g.icon || "💜",
+        memberIds,
+      };
+    }
+
+    // Collect the complete flat set of member IDs across all groups so we can
+    // fetch all relevant check-ins in a single DB query instead of N queries.
+    const allMemberIdSet = new Set();
+    for (const { memberIds } of Object.values(groupMap)) {
+      memberIds.forEach((id) => allMemberIdSet.add(id.toString()));
+    }
+    const allMemberIds = [...allMemberIdSet];
+
+    // Single query: all check-ins for today across every relevant member.
+    const todayCheckIns = await CheckIn.find({
+      user: { $in: allMemberIds },
+      date: today,
+    })
+      .select("user mood")
+      .lean();
+
+    // Index by userId → mood for O(1) lookup.
+    const userMoodMap = {};
+    for (const ci of todayCheckIns) {
+      userMoodMap[ci.user.toString()] = ci.mood;
+    }
+
+    const MOOD_KEYS = ["heartbreak", "fear", "sadness", "struggle", "hope", "joy", "calm"];
+
+    // Build a pulse card for each group.
+    const pulses = [];
+
+    for (const [groupId, { groupName, groupIcon, memberIds }] of Object.entries(groupMap)) {
+      const moodCounts = {};
+      let totalCheckIns = 0;
+
+      for (const memberId of memberIds) {
+        const mood = userMoodMap[memberId.toString()];
+        if (mood) {
+          totalCheckIns++;
+          moodCounts[mood] = (moodCounts[mood] || 0) + 1;
+        }
+      }
+
+      // Skip circles with no check-ins today — nothing to show.
+      if (totalCheckIns === 0) continue;
+
+      // Dominant mood = highest count; tie-break by MOOD_KEYS order.
+      let dominantMood = null;
+      let dominantCount = 0;
+      for (const key of MOOD_KEYS) {
+        if ((moodCounts[key] || 0) > dominantCount) {
+          dominantCount = moodCounts[key];
+          dominantMood = key;
+        }
+      }
+
+      pulses.push({
+        groupId,
+        groupName,
+        groupIcon,
+        totalCheckIns,
+        dominantMood,
+        moodCounts,
+      });
+    }
+
+    // Sort: most active circles first.
+    pulses.sort((a, b) => b.totalCheckIns - a.totalCheckIns);
+
+    return res.json({ pulses });
+  } catch (error) {
+    console.error("Circle pulse error:", error.message);
     return res.status(500).json({ message: error.message });
   }
 });
