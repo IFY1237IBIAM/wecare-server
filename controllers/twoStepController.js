@@ -1,14 +1,13 @@
 /**
- * controllers/twoStepController.js — DEBUG v3
+ * controllers/twoStepController.js — Production Clean Final
  *
- * Prints the EXACT schema paths Mongoose's live User model has registered,
- * directly from memory, to check for schema caching / duplicate registration.
+ * Handles two-step verification (6-digit PIN).
+ * Passkeys are handled separately in passkeyController.js.
  */
 
-const User      = require("../models/User");
-const mongoose  = require("mongoose");
-const bcrypt    = require("bcryptjs");
-const crypto    = require("crypto");
+const User   = require("../models/User");
+const bcrypt = require("bcryptjs");
+const crypto = require("crypto");
 const {
   sendTwoStepEnabledEmail,
   sendTwoStepDisabledEmail,
@@ -23,6 +22,7 @@ const hashPin = async (pin) => {
 const generateRecoveryCode = () =>
   crypto.randomBytes(5).toString("hex").toUpperCase();
 
+// ── GET /api/two-step/status ──────────────────────────────────────────────────
 exports.getTwoStepStatus = async (req, res) => {
   try {
     const user = await User.findById(req.user._id).select(
@@ -40,6 +40,7 @@ exports.getTwoStepStatus = async (req, res) => {
   }
 };
 
+// ── POST /api/two-step/enable ─────────────────────────────────────────────────
 exports.enableTwoStep = async (req, res) => {
   try {
     const { pin, hint } = req.body;
@@ -75,73 +76,30 @@ exports.enableTwoStep = async (req, res) => {
   }
 };
 
-// ── POST /api/two-step/disable — WITH SCHEMA INSPECTION ──────────────────────
+// ── POST /api/two-step/disable ────────────────────────────────────────────────
 exports.disableTwoStep = async (req, res) => {
-  console.log("🔶🔶🔶 DEBUG v3 disableTwoStep CALLED");
-
   try {
     const { pin } = req.body;
     if (!pin) return res.status(400).json({ message: "PIN is required." });
 
-    // ── Inspect the LIVE schema Mongoose has compiled in memory ──
-    const schemaPaths = Object.keys(User.schema.paths);
-    console.log("🔶 Schema has twoStepEnabled path:", schemaPaths.includes("twoStepEnabled"));
-    console.log("🔶 Schema has twoStepPin path:", schemaPaths.includes("twoStepPin"));
-    console.log("🔶 ALL schema paths:", schemaPaths.join(", "));
-
-    // Check the exact options Mongoose has for twoStepEnabled specifically
-    const twoStepEnabledPath = User.schema.paths["twoStepEnabled"];
-    console.log("🔶 twoStepEnabled path definition exists:", !!twoStepEnabledPath);
-    if (twoStepEnabledPath) {
-      console.log("🔶 twoStepEnabled selectOption:", twoStepEnabledPath.selected);
-      console.log("🔶 twoStepEnabled instance type:", twoStepEnabledPath.instance);
-    }
-
-    // How many times has "User" model been compiled? Check mongoose.models
-    console.log("🔶 mongoose.modelNames():", mongoose.modelNames());
-
     const user = await User.findById(req.user._id)
       .select("+twoStepPin +twoStepEnabled email pseudonym");
-
-    console.log("🔶 [MONGOOSE] twoStepEnabled:", user?.twoStepEnabled);
-
-    // Try accessing it via get() method directly — bypasses any getter override
-    console.log("🔶 [user.get()] twoStepEnabled:", user?.get ? user.get("twoStepEnabled") : "NO GET METHOD");
-
-    // Try the document's raw internal storage
-    console.log("🔶 [_doc] twoStepEnabled:", user?._doc?.twoStepEnabled);
-
-    const rawDoc = await mongoose.connection.db
-      .collection("users")
-      .findOne({ _id: new mongoose.Types.ObjectId(req.user._id) });
-
-    console.log("🔶 [RAW MONGODB] twoStepEnabled:", rawDoc?.twoStepEnabled);
-
     if (!user) return res.status(404).json({ message: "User not found." });
-
-    const actualEnabled = rawDoc?.twoStepEnabled;
-
-    if (!actualEnabled) {
-      return res.status(400).json({
-        message: "Two-step verification is not enabled.",
-        debug: { mongooseValue: user.twoStepEnabled, rawValue: rawDoc?.twoStepEnabled },
-      });
+    if (!user.twoStepEnabled) {
+      return res.status(400).json({ message: "Two-step verification is not enabled." });
     }
-
-    const match = await bcrypt.compare(String(pin), user.twoStepPin || rawDoc?.twoStepPin || "");
+    const match = await bcrypt.compare(String(pin), user.twoStepPin || "");
     if (!match) return res.status(401).json({ message: "Incorrect PIN." });
 
     const emailTo        = user.email;
     const emailPseudonym = user.pseudonym;
 
-    // Use RAW MongoDB driver to update, bypassing Mongoose, since we know it works
-    await mongoose.connection.db.collection("users").updateOne(
-      { _id: new mongoose.Types.ObjectId(req.user._id) },
-      {
-        $set:   { twoStepEnabled: false, twoStepHint: "", twoStepRecoveryUsed: false },
-        $unset: { twoStepPin: "", twoStepRecoveryCode: "" },
-      }
-    );
+    user.twoStepEnabled      = false;
+    user.twoStepPin          = undefined;
+    user.twoStepHint         = "";
+    user.twoStepRecoveryCode = undefined;
+    user.twoStepRecoveryUsed = false;
+    await user.save({ validateBeforeSave: false });
 
     sendTwoStepDisabledEmail({
       to:        emailTo,
@@ -150,11 +108,11 @@ exports.disableTwoStep = async (req, res) => {
 
     return res.json({ message: "Two-step verification disabled." });
   } catch (err) {
-    console.log("🔶 EXCEPTION:", err.message);
     return res.status(500).json({ message: err.message });
   }
 };
 
+// ── POST /api/two-step/verify  (no auth — pre-login) ─────────────────────────
 exports.verifyTwoStep = async (req, res) => {
   try {
     const { pin, email } = req.body;
@@ -177,6 +135,7 @@ exports.verifyTwoStep = async (req, res) => {
   }
 };
 
+// ── POST /api/two-step/change-pin ─────────────────────────────────────────────
 exports.changePin = async (req, res) => {
   try {
     const { currentPin, newPin } = req.body;
@@ -210,6 +169,7 @@ exports.changePin = async (req, res) => {
   }
 };
 
+// ── POST /api/two-step/recover  (no auth — locked-out user) ──────────────────
 exports.recoverTwoStep = async (req, res) => {
   try {
     const { email, recoveryCode, newPin } = req.body;
