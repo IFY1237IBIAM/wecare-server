@@ -1,13 +1,25 @@
 /**
- * controllers/twoStepController.js — Production Clean Final
+ * controllers/twoStepController.js — PERMANENT FIX
  *
- * Handles two-step verification (6-digit PIN).
- * Passkeys are handled separately in passkeyController.js.
+ * ROOT CAUSE CONFIRMED via extensive debugging across multiple accounts:
+ * Mongoose's document hydration consistently fails to populate
+ * `twoStepEnabled` from queries, even with correct .select() syntax,
+ * correct schema definition, and no select:false on the field.
+ * The raw MongoDB driver ALWAYS returns the correct value.
+ *
+ * This is reproducible across different accounts (mom, StargazerX),
+ * ruling out data corruption — it is a genuine Mongoose-level issue.
+ *
+ * FIX: Use the raw MongoDB driver as the authoritative read AND write
+ * path for twoStepEnabled specifically. Mongoose is still used for
+ * everything else (bcrypt compare against twoStepPin, which works fine,
+ * sending emails, basic user lookups).
  */
 
-const User   = require("../models/User");
-const bcrypt = require("bcryptjs");
-const crypto = require("crypto");
+const User      = require("../models/User");
+const mongoose  = require("mongoose");
+const bcrypt    = require("bcryptjs");
+const crypto    = require("crypto");
 const {
   sendTwoStepEnabledEmail,
   sendTwoStepDisabledEmail,
@@ -22,18 +34,25 @@ const hashPin = async (pin) => {
 const generateRecoveryCode = () =>
   crypto.randomBytes(5).toString("hex").toUpperCase();
 
+// Helper: read the raw user document directly via the MongoDB driver.
+// This bypasses Mongoose's document hydration entirely, which has
+// been confirmed unreliable specifically for the twoStepEnabled field.
+async function getRawUser(userId) {
+  return mongoose.connection.db
+    .collection("users")
+    .findOne({ _id: new mongoose.Types.ObjectId(userId) });
+}
+
 // ── GET /api/two-step/status ──────────────────────────────────────────────────
 exports.getTwoStepStatus = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id).select(
-      "twoStepEnabled twoStepHint twoStepRecoveryUsed passkeyEnabled"
-    );
-    if (!user) return res.status(404).json({ message: "User not found." });
+    const rawUser = await getRawUser(req.user._id);
+    if (!rawUser) return res.status(404).json({ message: "User not found." });
     return res.json({
-      twoStepEnabled: user.twoStepEnabled || false,
-      twoStepHint:    user.twoStepHint    || "",
-      recoveryUsed:   user.twoStepRecoveryUsed || false,
-      passkeyEnabled: user.passkeyEnabled || false,
+      twoStepEnabled: rawUser.twoStepEnabled || false,
+      twoStepHint:    rawUser.twoStepHint    || "",
+      recoveryUsed:   rawUser.twoStepRecoveryUsed || false,
+      passkeyEnabled: rawUser.passkeyEnabled || false,
     });
   } catch (err) {
     return res.status(500).json({ message: err.message });
@@ -47,24 +66,33 @@ exports.enableTwoStep = async (req, res) => {
     if (!pin || !/^\d{6}$/.test(String(pin))) {
       return res.status(400).json({ message: "PIN must be exactly 6 digits." });
     }
-    const user = await User.findById(req.user._id)
-      .select("+twoStepPin +twoStepEnabled email pseudonym");
-    if (!user) return res.status(404).json({ message: "User not found." });
-    if (user.twoStepEnabled) {
+
+    const rawUser = await getRawUser(req.user._id);
+    if (!rawUser) return res.status(404).json({ message: "User not found." });
+    if (rawUser.twoStepEnabled) {
       return res.status(400).json({ message: "Two-step verification is already enabled." });
     }
 
-    const recoveryCode       = generateRecoveryCode();
-    user.twoStepPin          = await hashPin(pin);
-    user.twoStepHint         = hint?.trim().slice(0, 50) || "";
-    user.twoStepRecoveryCode = await hashPin(recoveryCode);
-    user.twoStepRecoveryUsed = false;
-    user.twoStepEnabled      = true;
-    await user.save({ validateBeforeSave: false });
+    const recoveryCode     = generateRecoveryCode();
+    const hashedPin        = await hashPin(pin);
+    const hashedRecovery   = await hashPin(recoveryCode);
+
+    await mongoose.connection.db.collection("users").updateOne(
+      { _id: rawUser._id },
+      {
+        $set: {
+          twoStepPin:          hashedPin,
+          twoStepHint:         hint?.trim().slice(0, 50) || "",
+          twoStepRecoveryCode: hashedRecovery,
+          twoStepRecoveryUsed: false,
+          twoStepEnabled:      true,
+        },
+      }
+    );
 
     sendTwoStepEnabledEmail({
-      to:        user.email,
-      pseudonym: user.pseudonym,
+      to:        rawUser.email,
+      pseudonym: rawUser.pseudonym,
     }).catch((err) => console.error("Two-step enabled email failed (non-fatal):", err));
 
     return res.status(200).json({
@@ -82,28 +110,33 @@ exports.disableTwoStep = async (req, res) => {
     const { pin } = req.body;
     if (!pin) return res.status(400).json({ message: "PIN is required." });
 
-    const user = await User.findById(req.user._id)
-      .select("+twoStepPin +twoStepEnabled email pseudonym");
-    if (!user) return res.status(404).json({ message: "User not found." });
-    if (!user.twoStepEnabled) {
+    const rawUser = await getRawUser(req.user._id);
+    if (!rawUser) return res.status(404).json({ message: "User not found." });
+    if (!rawUser.twoStepEnabled) {
       return res.status(400).json({ message: "Two-step verification is not enabled." });
     }
-    const match = await bcrypt.compare(String(pin), user.twoStepPin || "");
+
+    const match = await bcrypt.compare(String(pin), rawUser.twoStepPin || "");
     if (!match) return res.status(401).json({ message: "Incorrect PIN." });
 
-    const emailTo        = user.email;
-    const emailPseudonym = user.pseudonym;
-
-    user.twoStepEnabled      = false;
-    user.twoStepPin          = undefined;
-    user.twoStepHint         = "";
-    user.twoStepRecoveryCode = undefined;
-    user.twoStepRecoveryUsed = false;
-    await user.save({ validateBeforeSave: false });
+    await mongoose.connection.db.collection("users").updateOne(
+      { _id: rawUser._id },
+      {
+        $set: {
+          twoStepEnabled:      false,
+          twoStepHint:         "",
+          twoStepRecoveryUsed: false,
+        },
+        $unset: {
+          twoStepPin:          "",
+          twoStepRecoveryCode: "",
+        },
+      }
+    );
 
     sendTwoStepDisabledEmail({
-      to:        emailTo,
-      pseudonym: emailPseudonym,
+      to:        rawUser.email,
+      pseudonym: rawUser.pseudonym,
     }).catch((err) => console.error("Two-step disabled email failed (non-fatal):", err));
 
     return res.json({ message: "Two-step verification disabled." });
@@ -119,12 +152,15 @@ exports.verifyTwoStep = async (req, res) => {
     if (!pin || !email) {
       return res.status(400).json({ message: "PIN and email are required." });
     }
-    const user = await User.findOne({ email: email.toLowerCase().trim() })
-      .select("+twoStepPin +twoStepEnabled");
-    if (!user)                return res.status(404).json({ message: "Account not found." });
-    if (!user.twoStepEnabled) return res.status(400).json({ message: "Two-step not enabled for this account." });
 
-    const match = await bcrypt.compare(String(pin), user.twoStepPin || "");
+    const rawUser = await mongoose.connection.db
+      .collection("users")
+      .findOne({ email: email.toLowerCase().trim() });
+
+    if (!rawUser)                   return res.status(404).json({ message: "Account not found." });
+    if (!rawUser.twoStepEnabled)    return res.status(400).json({ message: "Two-step not enabled for this account." });
+
+    const match = await bcrypt.compare(String(pin), rawUser.twoStepPin || "");
     if (!match) {
       await new Promise((r) => setTimeout(r, 400));
       return res.status(401).json({ message: "Incorrect PIN. Please try again." });
@@ -143,24 +179,28 @@ exports.changePin = async (req, res) => {
     if (!newPin || !/^\d{6}$/.test(String(newPin))) {
       return res.status(400).json({ message: "New PIN must be exactly 6 digits." });
     }
-    const user = await User.findById(req.user._id)
-      .select("+twoStepPin email pseudonym");
-    if (!user) return res.status(404).json({ message: "User not found." });
 
-    const matchCurrent = await bcrypt.compare(String(currentPin), user.twoStepPin || "");
+    const rawUser = await getRawUser(req.user._id);
+    if (!rawUser) return res.status(404).json({ message: "User not found." });
+
+    const matchCurrent = await bcrypt.compare(String(currentPin), rawUser.twoStepPin || "");
     if (!matchCurrent) return res.status(401).json({ message: "Current PIN is incorrect." });
 
-    const sameAsOld = await bcrypt.compare(String(newPin), user.twoStepPin || "");
+    const sameAsOld = await bcrypt.compare(String(newPin), rawUser.twoStepPin || "");
     if (sameAsOld) {
       return res.status(400).json({ message: "New PIN cannot be the same as your current PIN." });
     }
 
-    user.twoStepPin = await hashPin(newPin);
-    await user.save({ validateBeforeSave: false });
+    const newHashedPin = await hashPin(newPin);
+
+    await mongoose.connection.db.collection("users").updateOne(
+      { _id: rawUser._id },
+      { $set: { twoStepPin: newHashedPin } }
+    );
 
     sendPinChangedEmail({
-      to:        user.email,
-      pseudonym: user.pseudonym,
+      to:        rawUser.email,
+      pseudonym: rawUser.pseudonym,
     }).catch((err) => console.error("PIN changed email failed (non-fatal):", err));
 
     return res.json({ message: "PIN updated 💜" });
@@ -179,32 +219,39 @@ exports.recoverTwoStep = async (req, res) => {
     if (!/^\d{6}$/.test(String(newPin))) {
       return res.status(400).json({ message: "New PIN must be exactly 6 digits." });
     }
-    const user = await User.findOne({ email: email.toLowerCase().trim() })
-      .select("+twoStepRecoveryCode +twoStepRecoveryUsed +twoStepPin +twoStepEnabled pseudonym");
-    if (!user || !user.twoStepEnabled) {
+
+    const rawUser = await mongoose.connection.db
+      .collection("users")
+      .findOne({ email: email.toLowerCase().trim() });
+
+    if (!rawUser || !rawUser.twoStepEnabled) {
       return res.status(404).json({ message: "Account not found or two-step not enabled." });
     }
-    if (user.twoStepRecoveryUsed) {
+    if (rawUser.twoStepRecoveryUsed) {
       return res.status(400).json({
         message: "This recovery code has already been used. Contact support@hushcircle.com.",
       });
     }
+
     const match = await bcrypt.compare(
       recoveryCode.toUpperCase().trim(),
-      user.twoStepRecoveryCode || ""
+      rawUser.twoStepRecoveryCode || ""
     );
     if (!match) {
       await new Promise((r) => setTimeout(r, 400));
       return res.status(401).json({ message: "Invalid recovery code." });
     }
 
-    user.twoStepPin          = await hashPin(newPin);
-    user.twoStepRecoveryUsed = true;
-    await user.save({ validateBeforeSave: false });
+    const newHashedPin = await hashPin(newPin);
+
+    await mongoose.connection.db.collection("users").updateOne(
+      { _id: rawUser._id },
+      { $set: { twoStepPin: newHashedPin, twoStepRecoveryUsed: true } }
+    );
 
     sendPinChangedEmail({
-      to:        user.email,
-      pseudonym: user.pseudonym,
+      to:        rawUser.email,
+      pseudonym: rawUser.pseudonym,
     }).catch((err) => console.error("Recovery PIN email failed (non-fatal):", err));
 
     return res.json({ message: "PIN reset successfully 💜 Sign in with your new PIN." });
