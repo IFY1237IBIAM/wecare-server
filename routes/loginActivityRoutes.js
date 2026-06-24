@@ -1,11 +1,12 @@
 /**
- * routes/loginActivityRoutes.js
- * Mount: app.use("/api/activity", require("./routes/loginActivityRoutes"));
+ * routes/loginActivityRoutes.js — WITH RATE LIMITING
  */
 
 const express = require("express");
 const router  = express.Router();
-const { protect } = require("../middleware/authMiddleware");// ← destructured to match your export style
+const { protect } = require("../middleware/authMiddleware");
+
+const { loginActivityActionLimiter } = require("../middleware/rateLimiters");
 
 const {
   getLoginHistory,
@@ -15,8 +16,8 @@ const {
 } = require("../controllers/loginActivityController");
 
 router.get   ("/login-history",     protect, getLoginHistory);
-router.delete("/revoke/:sessionId", protect, revokeSession);
-router.delete("/revoke-all",        protect, revokeAllOtherSessions);
+router.delete("/revoke/:sessionId", protect, loginActivityActionLimiter, revokeSession);
+router.delete("/revoke-all",        protect, loginActivityActionLimiter, revokeAllOtherSessions);
 router.post  ("/mark-inactive",     protect, markSessionInactive);
 
 module.exports = router;

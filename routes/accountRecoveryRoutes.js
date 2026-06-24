@@ -1,11 +1,16 @@
 /**
- * routes/accountRecoveryRoutes.js
- * Mount: app.use("/api/recovery", require("./routes/accountRecoveryRoutes"));
+ * routes/accountRecoveryRoutes.js — WITH RATE LIMITING
  */
 
 const express = require("express");
 const router  = express.Router();
-const { protect, adminOnly } = require("../middleware/authMiddleware");
+const { protect } = require("../middleware/authMiddleware");
+
+const {
+  recoveryRequestLimiter,
+  recoveryStatusLimiter,
+  adminActionLimiter,
+} = require("../middleware/rateLimiters");
 
 const {
   submitRecoveryRequest,
@@ -16,7 +21,6 @@ const {
   rejectRecoveryRequest,
 } = require("../controllers/accountRecoveryController");
 
-// Guard: catch missing exports early
 [
   ["submitRecoveryRequest",     submitRecoveryRequest],
   ["getRequestStatus",          getRequestStatus],
@@ -30,14 +34,14 @@ const {
   }
 });
 
-// ── Public — no auth (the user is locked out) ─────────────────────────────────
-router.post("/request",              submitRecoveryRequest);
-router.get ("/status/:requestId",    getRequestStatus);
+// ── Public — no auth (the user is locked out), RATE LIMITED ──────────────────
+router.post("/request",           recoveryRequestLimiter, submitRecoveryRequest);
+router.get ("/status/:requestId", recoveryStatusLimiter,  getRequestStatus);
 
-// ── Admin only ──────────────────────────────────────────────────────────────
-router.get ("/admin/requests",                      protect, adminOnly, listRecoveryRequests);
-router.get ("/admin/requests/:requestId",           protect, adminOnly, getRecoveryRequestDetail);
-router.post("/admin/requests/:requestId/approve",   protect, adminOnly, approveRecoveryRequest);
-router.post("/admin/requests/:requestId/reject",    protect, adminOnly, rejectRecoveryRequest);
+// ── Admin only — capped in case a token is compromised ────────────────────────
+router.get ("/admin/requests",                    protect, adminOnly, adminActionLimiter, listRecoveryRequests);
+router.get ("/admin/requests/:requestId",         protect, adminOnly, adminActionLimiter, getRecoveryRequestDetail);
+router.post("/admin/requests/:requestId/approve", protect, adminOnly, adminActionLimiter, approveRecoveryRequest);
+router.post("/admin/requests/:requestId/reject",  protect, adminOnly, adminActionLimiter, rejectRecoveryRequest);
 
 module.exports = router;
