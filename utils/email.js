@@ -619,6 +619,182 @@ async function sendPasskeyDeletedEmail({ to, pseudonym, deviceName }) {
   return data;
 }
 
+
+/**
+ * ADDITIONS to utils/email.js
+ *
+ * Add these 3 functions to your existing utils/email.js file,
+ * and add them to the module.exports at the bottom.
+ *
+ * They use the same emailShell, ctaButton, codeBlock, benefitRow,
+ * infoBox, warningBox, sectionLabel, timestampBadge helpers that
+ * already exist in your email.js — no new imports needed.
+ */
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Account Recovery — Request Received
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function sendRecoveryRequestReceivedEmail({ to, pseudonym }) {
+  if (process.env.NODE_ENV === "development") {
+    console.log(`[DEV] Recovery request received email skipped for ${to}`);
+    return { skipped: true };
+  }
+
+  const bodyHtml = `
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#EDE8F5;">
+      We received your recovery request
+    </h1>
+    <p style="margin:0 0 24px;font-size:15px;color:#C4A3E8;line-height:1.6;">
+      Hi ${pseudonym}, we've received a request to recover access to your HushCircle account.
+      Our team will review it carefully within 24&ndash;48 hours.
+    </p>
+
+    ${sectionLabel("What happens next")}
+
+    ${benefitRow("&#x1F4CB;", "We review your details",
+      "Our team compares the information you submitted against your account records to confirm it's really you.")}
+    ${benefitRow("&#x2705;", "You'll get an email with the outcome",
+      "If approved, we'll disable your two-step verification so you can sign in with just your password.")}
+    ${benefitRow("&#x1F510;", "Re-enable security afterward",
+      "Once you're back in, we recommend setting up two-step verification or a passkey again right away.")}
+
+    ${infoBox("Important",
+      "If you did not submit this request, please contact us immediately at " +
+      `<a href="mailto:${SUPPORT}" style="color:#C4A3E8;">${SUPPORT}</a>. ` +
+      "No changes have been made to your account yet."
+    )}
+
+    <p style="margin:0;font-size:13px;color:#8B7FA8;text-align:center;line-height:1.6;">
+      Recovery request submitted for your account.
+    </p>
+    ${timestampBadge()}
+  `;
+
+  const { data, error } = await getResend().emails.send({
+    from:    FROM,
+    to,
+    replyTo: REPLY_TO,
+    subject: "We received your HushCircle account recovery request",
+    html:    emailShell({
+      title:     "Recovery request received",
+      preheader: "We're reviewing your account recovery request.",
+      bodyHtml,
+    }),
+  });
+
+  if (error) throw new Error(`Resend error (recovery received): ${error.message}`);
+  return data;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Account Recovery — Approved
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function sendRecoveryApprovedEmail({ to, pseudonym }) {
+  if (process.env.NODE_ENV === "development") {
+    console.log(`[DEV] Recovery approved email skipped for ${to}`);
+    return { skipped: true };
+  }
+
+  const bodyHtml = `
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#EDE8F5;">
+      Your account has been recovered &#x1F49C;
+    </h1>
+    <p style="margin:0 0 24px;font-size:15px;color:#C4A3E8;line-height:1.6;">
+      Hi ${pseudonym}, good news &mdash; your recovery request was approved.
+      Two-step verification has been turned off so you can sign in with just your password.
+    </p>
+
+    ${sectionLabel("What to do now")}
+
+    ${benefitRow("&#x1F511;", "Sign in with your password",
+      "If you remember your password, just sign in normally. If not, use 'Forgot password' on the sign-in screen to set a new one.")}
+    ${benefitRow("&#x1F510;", "Set up security again",
+      "Once you're signed in, we strongly recommend enabling two-step verification or a passkey again, and saving your recovery code somewhere safe this time.")}
+
+    ${warningBox(
+      "<strong>Didn't request this?</strong> If you believe your account was recovered without your permission, " +
+      `contact us immediately at <a href="mailto:${SUPPORT}" style="color:#D4607A;">${SUPPORT}</a>.`
+    )}
+
+    <p style="margin:0;font-size:13px;color:#8B7FA8;text-align:center;line-height:1.6;">
+      Account recovery approved. Two-step verification disabled.
+    </p>
+    ${timestampBadge()}
+  `;
+
+  const { data, error } = await getResend().emails.send({
+    from:    FROM,
+    to,
+    replyTo: REPLY_TO,
+    subject: "Your HushCircle account has been recovered",
+    html:    emailShell({
+      title:     "Account recovered",
+      preheader: "Your account recovery request was approved.",
+      bodyHtml,
+    }),
+  });
+
+  if (error) throw new Error(`Resend error (recovery approved): ${error.message}`);
+  return data;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Account Recovery — Rejected
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function sendRecoveryRejectedEmail({ to, pseudonym }) {
+  if (process.env.NODE_ENV === "development") {
+    console.log(`[DEV] Recovery rejected email skipped for ${to}`);
+    return { skipped: true };
+  }
+
+  const bodyHtml = `
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#EDE8F5;">
+      We couldn't verify your recovery request
+    </h1>
+    <p style="margin:0 0 24px;font-size:15px;color:#C4A3E8;line-height:1.6;">
+      Hi ${pseudonym}, we were unable to confirm the details in your recent account recovery request.
+      For your security, we did not make any changes to the account.
+    </p>
+
+    ${sectionLabel("What you can do")}
+
+    ${benefitRow("&#x1F4DD;", "Submit a new request",
+      "Try again with more specific details &mdash; your pseudonym, roughly when you joined, and a clear description of your situation helps us verify faster.")}
+    ${benefitRow("&#x2709;&#xFE0F;", "Contact support directly",
+      `If you're having trouble, reply to this email or reach us at <a href="mailto:${SUPPORT}" style="color:#C4A3E8;">${SUPPORT}</a> and we'll help personally.`)}
+
+    <p style="margin:0;font-size:13px;color:#8B7FA8;text-align:center;line-height:1.6;">
+      Account recovery request reviewed &mdash; unable to verify.
+    </p>
+    ${timestampBadge()}
+  `;
+
+  const { data, error } = await getResend().emails.send({
+    from:    FROM,
+    to,
+    replyTo: REPLY_TO,
+    subject: "Update on your HushCircle account recovery request",
+    html:    emailShell({
+      title:     "Recovery request not approved",
+      preheader: "We were unable to verify your account recovery request.",
+      bodyHtml,
+    }),
+  });
+
+  if (error) throw new Error(`Resend error (recovery rejected): ${error.message}`);
+  return data;
+}
+
+/**
+ * ADD THESE TO module.exports at the bottom of email.js:
+ *
+ *   sendRecoveryRequestReceivedEmail,
+ *   sendRecoveryApprovedEmail,
+ *   sendRecoveryRejectedEmail,
+ */
 // ─────────────────────────────────────────────────────────────────────────────
 // EXPORTS
 // ─────────────────────────────────────────────────────────────────────────────
@@ -637,4 +813,7 @@ module.exports = {
   sendPinChangedEmail,
   sendPasskeyRegisteredEmail,
   sendPasskeyDeletedEmail,
+  sendRecoveryRequestReceivedEmail,
+  sendRecoveryApprovedEmail,
+  sendRecoveryRejectedEmail,
 };
