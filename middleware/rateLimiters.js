@@ -1,30 +1,22 @@
 /**
- * middleware/rateLimiters.js
+ * middleware/rateLimiters.js — DEBUG VERSION
  *
- * Centralized rate limiters for all security-sensitive endpoints.
- * Tuned per-endpoint based on actual brute-force risk:
- *   - Stricter on anything that checks a secret (PIN, recovery code)
- *   - Looser on normal authenticated actions
- *   - Per-IP by default (express-rate-limit's standard behavior)
- *
- * Usage in route files:
- *   const { twoStepVerifyLimiter } = require("../middleware/rateLimiters");
- *   router.post("/verify", twoStepVerifyLimiter, verifyTwoStep);
+ * Adds logging specifically to passkeyAuthOptionsLimiter to see
+ * exactly what's happening at runtime, since this is the one
+ * limiter that mysteriously never triggers despite identical
+ * config to others that work correctly.
  */
 
 const rateLimit = require("express-rate-limit");
 
-// ── Helper: consistent JSON error shape matching your existing style ──────────
 function limitMessage(message) {
   return { message };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TWO-STEP VERIFICATION
+// TWO-STEP VERIFICATION (unchanged - these work correctly)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Guessing a 6-digit PIN — HIGH RISK, only 1,000,000 combinations.
-// 5 attempts per 15 minutes per IP, matches your existing loginLimiter pattern.
 const twoStepVerifyLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
@@ -34,8 +26,6 @@ const twoStepVerifyLimiter = rateLimit({
   skipSuccessfulRequests: true,
 });
 
-// Guessing a 10-character hex recovery code — lower risk than PIN
-// (16^10 combinations) but still worth limiting since it's pre-login.
 const twoStepRecoverLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
@@ -45,9 +35,6 @@ const twoStepRecoverLimiter = rateLimit({
   skipSuccessfulRequests: true,
 });
 
-// Enable/disable/change-pin require an existing valid session (authed),
-// so risk is lower, but still cap to prevent automated abuse of a
-// stolen/leaked token.
 const twoStepActionLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
@@ -57,21 +44,31 @@ const twoStepActionLimiter = rateLimit({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PASSKEY
+// PASSKEY — WITH DEBUG LOGGING
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Pre-login endpoint that takes a pseudonym — limits enumeration attempts
-// (checking many pseudonyms to see which ones have passkeys registered).
 const passkeyAuthOptionsLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
   message: limitMessage("Too many attempts. Please try again in 15 minutes."),
   standardHeaders: true,
   legacyHeaders: false,
+
+  // DEBUG: log every single hit to this limiter, including the IP key
+  // and current hit count, so we can see exactly what's happening
+  handler: (req, res, next, options) => {
+    console.log("🟠 passkeyAuthOptionsLimiter HANDLER FIRED (limit exceeded) - this should block now");
+    res.status(options.statusCode).json(options.message);
+  },
+
+  // keyGenerator lets us see exactly what key is being used to track this IP
+  keyGenerator: (req) => {
+    const key = req.ip;
+    console.log(`🟠 passkeyAuthOptionsLimiter keyGenerator called - key: ${key}`);
+    return key;
+  },
 });
 
-// Pre-login endpoint that completes a passkey sign-in — same risk class
-// as a password login attempt.
 const passkeyAuthVerifyLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
@@ -81,8 +78,6 @@ const passkeyAuthVerifyLimiter = rateLimit({
   skipSuccessfulRequests: true,
 });
 
-// Authenticated passkey registration — lower risk, generous limit
-// just to prevent automated spam-registering devices.
 const passkeyRegisterLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 10,
@@ -92,11 +87,9 @@ const passkeyRegisterLimiter = rateLimit({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// LOGIN ACTIVITY
+// LOGIN ACTIVITY (unchanged)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Authenticated, but revoke-all is destructive — cap to prevent abuse
-// of a stolen token rapidly cycling sessions.
 const loginActivityActionLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
@@ -106,12 +99,9 @@ const loginActivityActionLimiter = rateLimit({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ACCOUNT RECOVERY
+// ACCOUNT RECOVERY (unchanged - these work correctly)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Public, pre-login endpoint — the existing duplicate-pending check only
-// blocks repeat submissions for the SAME email. This adds a true per-IP
-// limit to stop someone submitting thousands of different fake emails.
 const recoveryRequestLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 5,
@@ -120,8 +110,6 @@ const recoveryRequestLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// Public status-check endpoint — low risk, but request IDs could be
-// enumerated/guessed, so still worth a generous cap.
 const recoveryStatusLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 30,
@@ -129,11 +117,6 @@ const recoveryStatusLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ADMIN ENDPOINTS (lower risk — already behind protect + adminOnly,
-// but still capped in case a token is compromised)
-// ─────────────────────────────────────────────────────────────────────────────
 
 const adminActionLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
