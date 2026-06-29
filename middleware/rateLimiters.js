@@ -1,10 +1,18 @@
 /**
- * middleware/rateLimiters.js — DEBUG VERSION
+ * middleware/rateLimiters.js — FINAL, FIXED VERSION
  *
- * Adds logging specifically to passkeyAuthOptionsLimiter to see
- * exactly what's happening at runtime, since this is the one
- * limiter that mysteriously never triggers despite identical
- * config to others that work correctly.
+ * ROOT CAUSE FOUND: app.set("trust proxy", 1) only trusted ONE proxy hop,
+ * but Render's infrastructure adds MULTIPLE internal hops. This caused
+ * req.ip to inconsistently resolve to different internal 10.x.x.x
+ * addresses on every request, making per-IP rate limiting unreliable
+ * across ALL limiters in the app (confirmed via direct keyGenerator
+ * logging — see investigation history).
+ *
+ * THE FIX (two parts):
+ *   1. server.js: app.set("trust proxy", true) — trust the full chain
+ *   2. THIS FILE: explicit getClientIp() helper that always reads the
+ *      FIRST entry in X-Forwarded-For, which is the original client,
+ *      used as a stable keyGenerator for every limiter below.
  */
 
 const rateLimit = require("express-rate-limit");
@@ -13,8 +21,19 @@ function limitMessage(message) {
   return { message };
 }
 
+// ── Stable client IP extraction ────────────────────────────────────────────────
+// The first entry in X-Forwarded-For is always the original client,
+// regardless of how many internal proxy hops are added after it.
+function getClientIp(req) {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (forwarded) {
+    return forwarded.split(",")[0].trim();
+  }
+  return req.ip || req.connection?.remoteAddress || "unknown";
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// TWO-STEP VERIFICATION (unchanged - these work correctly)
+// TWO-STEP VERIFICATION
 // ─────────────────────────────────────────────────────────────────────────────
 
 const twoStepVerifyLimiter = rateLimit({
@@ -24,6 +43,7 @@ const twoStepVerifyLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: true,
+  keyGenerator: getClientIp,
 });
 
 const twoStepRecoverLimiter = rateLimit({
@@ -33,6 +53,7 @@ const twoStepRecoverLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: true,
+  keyGenerator: getClientIp,
 });
 
 const twoStepActionLimiter = rateLimit({
@@ -41,10 +62,11 @@ const twoStepActionLimiter = rateLimit({
   message: limitMessage("Too many requests. Please slow down and try again shortly."),
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: getClientIp,
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PASSKEY — WITH DEBUG LOGGING
+// PASSKEY
 // ─────────────────────────────────────────────────────────────────────────────
 
 const passkeyAuthOptionsLimiter = rateLimit({
@@ -53,20 +75,7 @@ const passkeyAuthOptionsLimiter = rateLimit({
   message: limitMessage("Too many attempts. Please try again in 15 minutes."),
   standardHeaders: true,
   legacyHeaders: false,
-
-  // DEBUG: log every single hit to this limiter, including the IP key
-  // and current hit count, so we can see exactly what's happening
-  handler: (req, res, next, options) => {
-    console.log("🟠 passkeyAuthOptionsLimiter HANDLER FIRED (limit exceeded) - this should block now");
-    res.status(options.statusCode).json(options.message);
-  },
-
-  // keyGenerator lets us see exactly what key is being used to track this IP
-  keyGenerator: (req) => {
-    const key = req.ip;
-    console.log(`🟠 passkeyAuthOptionsLimiter keyGenerator called - key: ${key}`);
-    return key;
-  },
+  keyGenerator: getClientIp,
 });
 
 const passkeyAuthVerifyLimiter = rateLimit({
@@ -76,6 +85,7 @@ const passkeyAuthVerifyLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: true,
+  keyGenerator: getClientIp,
 });
 
 const passkeyRegisterLimiter = rateLimit({
@@ -84,10 +94,11 @@ const passkeyRegisterLimiter = rateLimit({
   message: limitMessage("Too many passkey registration attempts. Please try again later."),
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: getClientIp,
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// LOGIN ACTIVITY (unchanged)
+// LOGIN ACTIVITY
 // ─────────────────────────────────────────────────────────────────────────────
 
 const loginActivityActionLimiter = rateLimit({
@@ -96,10 +107,11 @@ const loginActivityActionLimiter = rateLimit({
   message: limitMessage("Too many requests. Please slow down and try again shortly."),
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: getClientIp,
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ACCOUNT RECOVERY (unchanged - these work correctly)
+// ACCOUNT RECOVERY
 // ─────────────────────────────────────────────────────────────────────────────
 
 const recoveryRequestLimiter = rateLimit({
@@ -108,6 +120,7 @@ const recoveryRequestLimiter = rateLimit({
   message: limitMessage("Too many recovery requests from this device. Please try again later or contact support@hushcircle.org directly."),
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: getClientIp,
 });
 
 const recoveryStatusLimiter = rateLimit({
@@ -116,6 +129,7 @@ const recoveryStatusLimiter = rateLimit({
   message: limitMessage("Too many requests. Please try again shortly."),
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: getClientIp,
 });
 
 const adminActionLimiter = rateLimit({
@@ -124,9 +138,11 @@ const adminActionLimiter = rateLimit({
   message: limitMessage("Too many admin requests. Please slow down."),
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: getClientIp,
 });
 
 module.exports = {
+  getClientIp,
   twoStepVerifyLimiter,
   twoStepRecoverLimiter,
   twoStepActionLimiter,
