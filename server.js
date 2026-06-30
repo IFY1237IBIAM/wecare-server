@@ -12,6 +12,7 @@ const path    = require("path");
 const morgan  = require("morgan");
 const { getClientIp } = require("./middleware/rateLimiters");
 const sanitize = require("./middleware/sanitize");
+const { redactBody } = require("./middleware/redactLogs");
 
 const User = require("./models/User");
 require("./models/GroupAuditLog");
@@ -52,8 +53,9 @@ app.set("trust proxy", true);
 
 app.use(helmet());
 app.use(cors());
-app.use(express.json({ limit: "1mb" }));   // caps payload size — was unbounded before
+app.use(express.json({ limit: "1mb" }));   // caps payload size
 app.use(sanitize);                          // NoSQL injection protection — strips $/. keys
+app.use(redactBody);                        // attaches req.safeBody — redacts passwords/PINs/tokens for any future logging
 app.use(morgan("dev"));
 
 // ─────────────────────────────────────────────────────────────────────────────
