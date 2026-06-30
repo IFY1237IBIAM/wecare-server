@@ -11,6 +11,7 @@ const jwt     = require("jsonwebtoken");
 const path    = require("path");
 const morgan  = require("morgan");
 const { getClientIp } = require("./middleware/rateLimiters");
+const sanitize = require("./middleware/sanitize");
 
 const User = require("./models/User");
 require("./models/GroupAuditLog");
@@ -45,17 +46,14 @@ app.use("/", require("./routes/wellKnownRoutes"));
 // ─────────────────────────────────────────────────────────────────────────────
 app.use((req, res, next) => { req.io = io; next(); });
 
-// FIXED: was app.set("trust proxy", 1) — only trusted ONE proxy hop, but
-// Render's infrastructure adds MULTIPLE internal hops, causing req.ip to
-// inconsistently resolve to different internal 10.x.x.x addresses on every
-// request. This broke per-IP rate limiting across the entire app.
-// "true" trusts the full chain — safe since Render's edge network is
-// fully trusted infrastructure.
+// Trusts the full proxy chain — required for Render's multi-hop infrastructure
+// so req.ip / X-Forwarded-For resolve consistently (fixes rate limiting).
 app.set("trust proxy", true);
 
 app.use(helmet());
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "1mb" }));   // caps payload size — was unbounded before
+app.use(sanitize);                          // NoSQL injection protection — strips $/. keys
 app.use(morgan("dev"));
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -104,10 +102,6 @@ module.exports.io = io;
 // ─────────────────────────────────────────────────────────────────────────────
 // RATE LIMITERS
 // ─────────────────────────────────────────────────────────────────────────────
-
-// FIXED: added explicit keyGenerator so this limiter uses the same stable
-// IP extraction as every other limiter in middleware/rateLimiters.js —
-// this had the identical hidden bug as the other limiters.
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
