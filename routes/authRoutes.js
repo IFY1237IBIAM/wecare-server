@@ -2,10 +2,11 @@ const express = require("express");
 const router = express.Router();
 const authController = require("../controllers/authController");
 const { protect } = require("../middleware/authMiddleware");
+const { validateEmail } = require("../middleware/validators");
 
 router.post("/signup", authController.signup);
-router.post("/login", authController.login);
-router.post("/switch-token", authController.login); // ← add this line only
+router.post("/login", validateEmail, authController.login);
+router.post("/switch-token", authController.login);
 router.get("/me", protect, authController.getMe);
 router.get("/refresh", protect, authController.refreshUser);
 router.get("/stats", protect, authController.getUserStats);

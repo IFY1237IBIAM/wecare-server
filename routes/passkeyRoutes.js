@@ -1,5 +1,5 @@
 /**
- * routes/passkeyRoutes.js — WITH RATE LIMITING
+ * routes/passkeyRoutes.js — WITH RATE LIMITING + INPUT VALIDATION
  */
 
 const express = require("express");
@@ -11,6 +11,8 @@ const {
   passkeyAuthVerifyLimiter,
   passkeyRegisterLimiter,
 } = require("../middleware/rateLimiters");
+
+const { validatePseudonym } = require("../middleware/validators");
 
 const {
   getRegistrationOptions,
@@ -34,15 +36,12 @@ const {
   }
 });
 
-// Registration (user must already be logged in) — rate limited to
-// prevent automated spam-registering devices
+// Registration (user must already be logged in)
 router.get ("/register/options", protect, passkeyRegisterLimiter, getRegistrationOptions);
 router.post("/register/verify",  protect, passkeyRegisterLimiter, verifyRegistration);
 
-// Authentication (no protect — user is signing in) — RATE LIMITED
-// since these are pre-login endpoints that could be used for
-// enumeration or brute-force
-router.post("/auth/options", passkeyAuthOptionsLimiter, getAuthenticationOptions);
+// Authentication (no protect — user is signing in) — RATE LIMITED + VALIDATED
+router.post("/auth/options", passkeyAuthOptionsLimiter, validatePseudonym, getAuthenticationOptions);
 router.post("/auth/verify",  passkeyAuthVerifyLimiter,  verifyAuthentication);
 
 // Management

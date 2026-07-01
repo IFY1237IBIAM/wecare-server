@@ -1,5 +1,5 @@
 /**
- * routes/accountRecoveryRoutes.js — WITH RATE LIMITING
+ * routes/accountRecoveryRoutes.js — WITH RATE LIMITING + INPUT VALIDATION
  */
 
 const express = require("express");
@@ -11,6 +11,11 @@ const {
   recoveryStatusLimiter,
   adminActionLimiter,
 } = require("../middleware/rateLimiters");
+
+const {
+  validateEmail,
+  validateStringField,
+} = require("../middleware/validators");
 
 const {
   submitRecoveryRequest,
@@ -34,8 +39,15 @@ const {
   }
 });
 
-// ── Public — no auth (the user is locked out), RATE LIMITED ──────────────────
-router.post("/request",           recoveryRequestLimiter, submitRecoveryRequest);
+// ── Public — no auth (the user is locked out), RATE LIMITED + VALIDATED ──────
+router.post(
+  "/request",
+  recoveryRequestLimiter,
+  validateEmail,
+  validateStringField("pseudonym", { required: true, maxLength: 20 }),
+  validateStringField("reason",    { required: true, minLength: 20, maxLength: 1000 }),
+  submitRecoveryRequest
+);
 router.get ("/status/:requestId", recoveryStatusLimiter,  getRequestStatus);
 
 // ── Admin only — capped in case a token is compromised ────────────────────────

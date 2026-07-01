@@ -1,5 +1,5 @@
 /**
- * routes/twoStepRoutes.js — WITH RATE LIMITING
+ * routes/twoStepRoutes.js — WITH RATE LIMITING + INPUT VALIDATION
  */
 
 const express = require("express");
@@ -11,6 +11,11 @@ const {
   twoStepRecoverLimiter,
   twoStepActionLimiter,
 } = require("../middleware/rateLimiters");
+
+const {
+  validateEmail,
+  validatePin,
+} = require("../middleware/validators");
 
 const {
   getTwoStepStatus,
@@ -36,13 +41,12 @@ const {
 
 // Protected — user must be logged in
 router.get ("/status",     protect, getTwoStepStatus);
-router.post("/enable",     protect, twoStepActionLimiter, enableTwoStep);
-router.post("/disable",    protect, twoStepActionLimiter, disableTwoStep);
-router.post("/change-pin", protect, twoStepActionLimiter, changePin);
+router.post("/enable",     protect, twoStepActionLimiter, validatePin, enableTwoStep);
+router.post("/disable",    protect, twoStepActionLimiter, validatePin, disableTwoStep);
+router.post("/change-pin", protect, twoStepActionLimiter, validatePin, changePin);
 
-// No protect — user is not fully authenticated yet, but RATE LIMITED
-// since these guess a 6-digit PIN or a recovery code
-router.post("/verify",  twoStepVerifyLimiter,   verifyTwoStep);
-router.post("/recover", twoStepRecoverLimiter,  recoverTwoStep);
+// No protect — user is not fully authenticated yet, but RATE LIMITED + VALIDATED
+router.post("/verify",  twoStepVerifyLimiter,  validateEmail, validatePin, verifyTwoStep);
+router.post("/recover", twoStepRecoverLimiter,  validateEmail, recoverTwoStep);
 
 module.exports = router;
