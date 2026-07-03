@@ -8,25 +8,47 @@ const sendPushNotification = async (userId, { title, body, data = {} }) => {
     const tokenDocs = await NotificationToken.find({ user: userId });
     if (!tokenDocs.length) return;
 
-    const messages = tokenDocs
-      .filter((t) => Expo.isExpoPushToken(t.expoPushToken))
-      .map((t) => ({
-        to:    t.expoPushToken,
-        sound: "default",
-        title,
-        body,
-        data,
-      }));
+    const validDocs = tokenDocs.filter((t) =>
+      Expo.isExpoPushToken(t.expoPushToken)
+    );
+    if (!validDocs.length) return;
 
-    if (!messages.length) return;
+    const messages = validDocs.map((t) => ({
+      to:    t.expoPushToken,
+      sound: "default",
+      title,
+      body,
+      data,
+    }));
 
     const chunks = expo.chunkPushNotifications(messages);
+    const invalidTokens = [];
+
     for (const chunk of chunks) {
       try {
-        await expo.sendPushNotificationsAsync(chunk);
+        const receipts = await expo.sendPushNotificationsAsync(chunk);
+
+        // ── Check each receipt and collect dead tokens ─────────────────
+        receipts.forEach((receipt, i) => {
+          if (
+            receipt.status === "error" &&
+            (receipt.details?.error === "DeviceNotRegistered" ||
+             receipt.details?.error === "InvalidCredentials")
+          ) {
+            invalidTokens.push(chunk[i].to);
+          }
+        });
       } catch (e) {
         console.log("Expo chunk error:", e.message);
       }
+    }
+
+    // ── Auto-remove stale tokens ───────────────────────────────────────
+    if (invalidTokens.length > 0) {
+      await NotificationToken.deleteMany({
+        expoPushToken: { $in: invalidTokens },
+      });
+      console.log(`🧹 Removed ${invalidTokens.length} stale token(s) for user ${userId}`);
     }
   } catch (e) {
     console.log("sendPushNotification error:", e.message);
