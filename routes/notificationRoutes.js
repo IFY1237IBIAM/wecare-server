@@ -162,6 +162,16 @@ router.delete("/:id", protect, async (req, res) => {
   }
 });
 
+// TEMPORARY - clean up stale tokens
+router.delete("/cleanup-tokens", protect, async (req, res) => {
+  try {
+    await NotificationToken.deleteMany({ user: req.user._id });
+    return res.json({ message: "All tokens cleared" });
+  } catch (e) {
+    return res.status(500).json({ message: e.message });
+  }
+});
+
 // ── mark-all-read (PUT alias kept for backwards compat) ───────────────────
 router.put("/mark-all-read", protect, async (req, res) => {
   try {
