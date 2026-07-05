@@ -3,21 +3,34 @@ const router = express.Router();
 const authController = require("../controllers/authController");
 const { protect } = require("../middleware/authMiddleware");
 const { validateEmail } = require("../middleware/validators");
+const rateLimit = require("express-rate-limit");
+const { getClientIp } = require("../middleware/rateLimiters");
 
-router.post("/signup", authController.signup);
-router.post("/login", validateEmail, authController.login);
+// 5 signups per hour per IP — generous for real users, stops bot account creation
+const signupLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  message: { message: "Too many accounts created from this device. Please try again later." },
+  skipSuccessfulRequests: false,
+  keyGenerator: getClientIp,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+router.post("/signup",       signupLimiter, validateEmail, authController.signup);
+router.post("/login",        validateEmail, authController.login);
 router.post("/switch-token", authController.login);
-router.get("/me", protect, authController.getMe);
-router.get("/refresh", protect, authController.refreshUser);
-router.get("/stats", protect, authController.getUserStats);
-router.get("/my-posts", protect, authController.getMyPosts);
-router.get("/saved-posts", protect, authController.getSavedPosts);
-router.put("/presence", protect, authController.updatePresence);
-router.put("/offline", protect, authController.setOffline);
-router.put("/online-status-privacy", protect, authController.toggleOnlineStatusPrivacy);
-router.put("/bio", protect, authController.updateBio);
+router.get ("/me",           protect, authController.getMe);
+router.get ("/refresh",      protect, authController.refreshUser);
+router.get ("/stats",        protect, authController.getUserStats);
+router.get ("/my-posts",     protect, authController.getMyPosts);
+router.get ("/saved-posts",  protect, authController.getSavedPosts);
+router.put ("/presence",     protect, authController.updatePresence);
+router.put ("/offline",      protect, authController.setOffline);
+router.put ("/online-status-privacy", protect, authController.toggleOnlineStatusPrivacy);
+router.put ("/bio",          protect, authController.updateBio);
 router.patch("/clear-reinstated", protect, authController.clearReinstatedStatus);
-router.get("/user/:pseudonym", protect, authController.getUserByPseudonym);
-router.get("/search-users", protect, authController.searchUsers);
+router.get ("/user/:pseudonym", protect, authController.getUserByPseudonym);
+router.get ("/search-users", protect, authController.searchUsers);
 
 module.exports = router;

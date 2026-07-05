@@ -11,8 +11,9 @@ const jwt     = require("jsonwebtoken");
 const path    = require("path");
 const morgan  = require("morgan");
 const { getClientIp } = require("./middleware/rateLimiters");
-const sanitize = require("./middleware/sanitize");
+const sanitize    = require("./middleware/sanitize");
 const { redactBody } = require("./middleware/redactLogs");
+const xssSanitize = require("./middleware/xssSanitize");
 
 const User = require("./models/User");
 require("./models/GroupAuditLog");
@@ -38,7 +39,6 @@ const io = new Server(httpServer, {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WELL-KNOWN — MUST be first, before helmet/cors/json middleware
-// Serves apple-app-site-association + assetlinks.json for passkey domain verification
 // ─────────────────────────────────────────────────────────────────────────────
 app.use("/", require("./routes/wellKnownRoutes"));
 
@@ -46,16 +46,13 @@ app.use("/", require("./routes/wellKnownRoutes"));
 // MIDDLEWARE
 // ─────────────────────────────────────────────────────────────────────────────
 app.use((req, res, next) => { req.io = io; next(); });
-
-// Trusts the full proxy chain — required for Render's multi-hop infrastructure
-// so req.ip / X-Forwarded-For resolve consistently (fixes rate limiting).
 app.set("trust proxy", true);
-
 app.use(helmet());
 app.use(cors());
-app.use(express.json({ limit: "1mb" }));   // caps payload size
-app.use(sanitize);                          // NoSQL injection protection — strips $/. keys
-app.use(redactBody);                        // attaches req.safeBody — redacts passwords/PINs/tokens for any future logging
+app.use(express.json({ limit: "1mb" }));
+app.use(sanitize);        // NoSQL injection — strips $/ . keys
+app.use(xssSanitize);     // XSS — strips HTML tags from all string fields
+app.use(redactBody);      // Log safety — redacts passwords/PINs in req.safeBody
 app.use(morgan("dev"));
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -139,15 +136,15 @@ app.use("/api/checkin",       require("./routes/checkInRoutes"));
 app.use("/api/groups",        groupLimiter, require("./routes/groupRoutes"));
 app.use("/api/appeals",       require("./routes/appealRoutes"));
 app.use("/api/settings",      require("./routes/settingsRoutes"));
-app.use("/api/passkey",       require("./routes/passkeyRoutes"));   // ← passkeys
-app.use("/api/two-step",      require("./routes/twoStepRoutes"));   // ← two-step PIN
+app.use("/api/passkey",       require("./routes/passkeyRoutes"));
+app.use("/api/two-step",      require("./routes/twoStepRoutes"));
 app.use("/api/users", require("./routes/avatarVibeRoute"));
-app.use("/api/recovery", require("./routes/accountRecoveryRoutes"));
-app.use("/api/activity", require("./routes/loginActivityRoutes"));
+app.use("/api/recovery",      require("./routes/accountRecoveryRoutes"));
+app.use("/api/activity",      require("./routes/loginActivityRoutes"));
 app.use("/api/email",         emailRoutes);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// WEB FALLBACK (shared post links)
+// WEB FALLBACK
 // ─────────────────────────────────────────────────────────────────────────────
 app.use(express.static(path.join(__dirname, "public")));
 app.get("/post/:postId*", (req, res) => res.sendFile(path.join(__dirname, "public", "post", "index.html")));

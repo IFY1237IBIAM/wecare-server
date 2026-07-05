@@ -59,6 +59,7 @@ const userSchema = new mongoose.Schema(
     // passkeyEnabled is a convenience flag — the source of truth is the Passkey collection.
     // Set true when any passkey is registered; false when all are deleted.
     passkeyEnabled: { type: Boolean, default: false },
+    passwordChangedAt: { type: Date, default: null },
 
     // ── Profile ───────────────────────────────────────────────────────────────
     bio:             { type: String,  maxlength: 100, default: "" },

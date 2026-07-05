@@ -256,6 +256,7 @@ router.post("/reset-password", resetPasswordLimiter, async (req, res) => {
     }
 
     user.password            = newPassword; // pre-save hook hashes it
+    user.passwordChangedAt = new Date();
     user.passwordResetCode   = undefined;
     user.passwordResetExpiry = undefined;
     await user.save();
