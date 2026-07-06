@@ -1,4 +1,4 @@
-// WeCare Smart Content Moderator
+// HushCircle Smart Content Moderator
 
 const CRISIS_KEYWORDS = [
   "suicide", "kill myself", "end my life", "want to die", "rather be dead",

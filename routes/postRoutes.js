@@ -27,6 +27,43 @@ router.put("/:id", protect, postController.editPost);
 router.delete("/:id", protect, postController.deletePost);
 router.post("/:id/save", protect, postController.savePost);
 router.post("/:id/report", protect, postController.reportPost);
+// POST /api/posts/:id/comments/:commentId/report
+router.post("/:id/comments/:commentId/report", protect, async (req, res) => {
+  try {
+    const CommentReport = require("../models/CommentReport");
+    const { reason, details, replyId, pseudonym, text } = req.body;
+
+    if (!reason) return res.status(400).json({ message: "Reason is required" });
+
+    const existing = await CommentReport.findOne({
+      reporter:  req.user._id,
+      post:      req.params.id,
+      commentId: req.params.commentId,
+      replyId:   replyId || null,
+    });
+
+    if (existing) {
+      return res.status(400).json({ message: "You have already reported this." });
+    }
+
+    await CommentReport.create({
+      reporter:  req.user._id,
+      post:      req.params.id,
+      commentId: req.params.commentId,
+      replyId:   replyId || null,
+      pseudonym, text, reason,
+      details:   details || "",
+      type:      replyId ? "reply" : "comment",
+    });
+
+    return res.json({ message: "Report submitted. Thank you 💜" });
+  } catch (e) {
+    if (e.code === 11000) {
+      return res.status(400).json({ message: "You have already reported this." });
+    }
+    return res.status(500).json({ message: e.message });
+  }
+});
 router.put("/:id/comments/:commentId", protect, postController.editComment);
 router.delete("/:id/comments/:commentId", protect, postController.deleteComment);
 router.put("/:id/comments/:commentId/replies/:replyId", protect, postController.editReply);
