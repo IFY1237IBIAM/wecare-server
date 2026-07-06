@@ -22,7 +22,7 @@ router.post("/unban-user", adminController.unbanUser);
 
 
 // GET /api/admin/comment-reports
-router.get("/comment-reports", protect, requireAdmin, async (req, res) => {
+router.get("/comment-reports", async (req, res) => {
   try {
     const CommentReport = require("../models/CommentReport");
     const reports = await CommentReport.find({ status: "pending" })
@@ -37,7 +37,7 @@ router.get("/comment-reports", protect, requireAdmin, async (req, res) => {
 });
 
 // PUT /api/admin/comment-reports/:id/dismiss
-router.put("/comment-reports/:id/dismiss", protect, requireAdmin, async (req, res) => {
+router.put("/comment-reports/:id/dismiss", async (req, res) => {
   try {
     const CommentReport = require("../models/CommentReport");
     await CommentReport.findByIdAndUpdate(req.params.id, { status: "dismissed" });
@@ -48,7 +48,7 @@ router.put("/comment-reports/:id/dismiss", protect, requireAdmin, async (req, re
 });
 
 // PUT /api/admin/comment-reports/:id/resolve
-router.put("/comment-reports/:id/resolve", protect, requireAdmin, async (req, res) => {
+router.put("/comment-reports/:id/resolve", async (req, res) => {
   try {
     const CommentReport = require("../models/CommentReport");
     const Post = require("../models/Post");
