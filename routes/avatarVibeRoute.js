@@ -5,21 +5,17 @@
 //
 // Response shape:
 // {
-//   emoji:     string | null,   // the emoji to show, or null if nothing to show
+//   emoji:     string | null,
 //   type:      "milestone" | "mood" | null,
-//   mood:      string | null,   // raw mood key if type === "mood"
-//   milestone: number | null,   // streak day count if type === "milestone"
+//   mood:      string | null,
+//   milestone: number | null,
 // }
 //
 // Rules:
-//  - Only shows an emoji if the user checked in TODAY (localDate param)
-//  - Milestone takes priority: if today's streak is a milestone day, show
-//    the milestone emoji regardless of mood
-//  - Falls back to mood emoji otherwise
+//  - Returns { emoji: null } if the user has showVibeEmoji set to false
 //  - Returns { emoji: null } if the user hasn't checked in today
-//
-// Privacy: only the emoji is returned — no mood note, no streak history,
-// no personal data beyond what the emoji itself conveys.
+//  - Milestone takes priority over mood if today's streak hits a milestone day
+//  - Privacy: only the emoji is returned — no mood note, no streak history
 
 const express  = require("express");
 const router   = express.Router();
@@ -49,7 +45,7 @@ const MILESTONE_EMOJI = {
   100: "👑",
 };
 
-// ── Date helpers (same pattern as checkin.js) ─────────────────────────────────
+// ── Date helpers ──────────────────────────────────────────────────────────────
 
 function isValidDateString(str) {
   return typeof str === "string" && /^\d{4}-\d{2}-\d{2}$/.test(str);
@@ -65,14 +61,12 @@ function addDays(dateStr, delta) {
   return d.toISOString().split("T")[0];
 }
 
-// ── Streak calculator (mirrors checkin.js exactly) ────────────────────────────
+// ── Streak calculator ─────────────────────────────────────────────────────────
 
 function calcCurrentStreak(dates, referenceToday) {
   if (!dates.length) return 0;
   const yesterday = addDays(referenceToday, -1);
   const startDate = dates[0];
-
-  // Streak is only alive if the most recent check-in is today or yesterday
   if (startDate !== referenceToday && startDate !== yesterday) return 0;
 
   let streak    = 1;
@@ -96,9 +90,17 @@ router.get("/avatar-vibe/:pseudonym", protect, async (req, res) => {
     const { localDate }  = req.query;
     const today = isValidDateString(localDate) ? localDate : serverUTCDateFallback();
 
-    // Look up the target user
-    const targetUser = await User.findOne({ pseudonym }).select("_id").lean();
+    // Look up target user — include showVibeEmoji privacy flag
+    const targetUser = await User.findOne({ pseudonym })
+      .select("_id showVibeEmoji")
+      .lean();
+
     if (!targetUser) {
+      return res.json({ emoji: null, type: null, mood: null, milestone: null });
+    }
+
+    // ── Privacy check — user has opted out of showing their vibe emoji ────────
+    if (targetUser.showVibeEmoji === false) {
       return res.json({ emoji: null, type: null, mood: null, milestone: null });
     }
 
@@ -109,7 +111,6 @@ router.get("/avatar-vibe/:pseudonym", protect, async (req, res) => {
     }).select("mood").lean();
 
     if (!todayCheckIn) {
-      // No check-in today — no emoji to show
       return res.json({ emoji: null, type: null, mood: null, milestone: null });
     }
 

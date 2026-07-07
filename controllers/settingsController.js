@@ -21,7 +21,7 @@ exports.getSettings = async (req, res) => {
   try {
     const settings = await getOrCreateSettings(req.user._id);
     const user = await User.findById(req.user._id)
-      .select("pseudonym email isOnline showOnlineStatus confirmedViolations isBanned");
+      .select("pseudonym email isOnline showOnlineStatus confirmedViolations isBanned showVibeEmoji");
 
     return res.json({ settings, user });
   } catch (error) {
@@ -55,6 +55,28 @@ exports.updateSettings = async (req, res) => {
 
     await settings.save();
     return res.json({ message: "Settings updated 💜", settings });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+// PATCH /api/settings/vibe-emoji
+// Toggles whether this user's mood/milestone emoji is visible to others.
+// No body required — just toggles the current value.
+exports.toggleVibeEmoji = async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select("showVibeEmoji");
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    user.showVibeEmoji = !user.showVibeEmoji;
+    await user.save();
+
+    return res.json({
+      message: user.showVibeEmoji
+        ? "Vibe emoji is now visible to others 💜"
+        : "Vibe emoji is now hidden from others 💜",
+      showVibeEmoji: user.showVibeEmoji,
+    });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
@@ -166,7 +188,6 @@ exports.changePassword = async (req, res) => {
       return res.status(401).json({ message: "Current password is incorrect" });
     }
 
-    // ── NEW: block same password ──
     const isSameAsOld = await user.matchPassword(newPassword);
     if (isSameAsOld) {
       return res.status(400).json({
@@ -222,7 +243,6 @@ exports.deleteAccount = async (req, res) => {
 
     const userId = req.user._id;
 
-    // Hard delete all user data
     await Post.deleteMany({ author: userId });
     await Report.deleteMany({ reportedBy: userId });
     await Notification.deleteMany({ $or: [{ recipient: userId }, { sender: userId }] });
@@ -232,7 +252,6 @@ exports.deleteAccount = async (req, res) => {
     await NotificationToken.deleteMany({ user: userId });
     await UserSettings.deleteMany({ user: userId });
 
-    // Remove user from groups and saved posts
     try {
       const Group = require("../models/Group");
       await Group.updateMany(
@@ -241,7 +260,6 @@ exports.deleteAccount = async (req, res) => {
       );
     } catch (e) {}
 
-    // Delete comments/replies by this user in others' posts (soft approach — anonymize)
     await Post.updateMany(
       { "comments.author": userId },
       {
@@ -266,7 +284,6 @@ exports.deleteAccount = async (req, res) => {
       { arrayFilters: [{ "r.author": userId }] }
     );
 
-    // Finally delete the user
     await User.findByIdAndDelete(userId);
 
     return res.json({ message: "Account deleted. Goodbye 💜" });

@@ -17,4 +17,10 @@ router.delete("/block/:userId", settingsController.unblockUser);
 router.get("/blocked-users", settingsController.getBlockedUsers);
 router.get("/report-history", settingsController.getReportHistory);
 
+// ── Avatar Vibe Emoji privacy toggle ─────────────────────────────────────────
+// PATCH /api/settings/vibe-emoji
+// Toggles whether the requesting user's mood/milestone emoji is visible
+// on their avatar to other users. No request body needed.
+router.patch("/vibe-emoji", settingsController.toggleVibeEmoji);
+
 module.exports = router;

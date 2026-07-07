@@ -50,16 +50,14 @@ const userSchema = new mongoose.Schema(
 
     // ── Two-Step Verification ─────────────────────────────────────────────────
     twoStepEnabled:      { type: Boolean, default: false },
-    twoStepPin:          { type: String,  select: false },       // bcrypt-hashed 6-digit PIN
-    twoStepHint:         { type: String,  default: "" },         // memory hint, not the PIN
-    twoStepRecoveryCode: { type: String,  select: false },       // bcrypt-hashed one-time code
+    twoStepPin:          { type: String,  select: false },
+    twoStepHint:         { type: String,  default: "" },
+    twoStepRecoveryCode: { type: String,  select: false },
     twoStepRecoveryUsed: { type: Boolean, default: false },
 
     // ── Passkey ───────────────────────────────────────────────────────────────
-    // passkeyEnabled is a convenience flag — the source of truth is the Passkey collection.
-    // Set true when any passkey is registered; false when all are deleted.
-    passkeyEnabled: { type: Boolean, default: false },
-    passwordChangedAt: { type: Date, default: null },
+    passkeyEnabled:    { type: Boolean, default: false },
+    passwordChangedAt: { type: Date,    default: null  },
 
     // ── Profile ───────────────────────────────────────────────────────────────
     bio:             { type: String,  maxlength: 100, default: "" },
@@ -67,6 +65,12 @@ const userSchema = new mongoose.Schema(
     isOnline:        { type: Boolean, default: false },
     showOnlineStatus:{ type: Boolean, default: true },
     savedPosts:      [{ type: mongoose.Schema.Types.ObjectId, ref: "Post" }],
+
+    // ── Avatar Vibe Emoji privacy ─────────────────────────────────────────────
+    // When false, the floating mood/milestone emoji is hidden from other users'
+    // view of this user's avatar. The user can still check in normally —
+    // streaks, history and Circle Pulse are unaffected.
+    showVibeEmoji: { type: Boolean, default: true },
 
     // ── Push Notifications ────────────────────────────────────────────────────
     expoPushToken: { type: String, default: null },
