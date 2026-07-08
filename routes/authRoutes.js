@@ -32,6 +32,12 @@ router.put ("/bio",          protect, authController.updateBio);
 // PUT /api/auth/update-pseudonym
 router.put("/update-pseudonym", protect, async (req, res) => {
   try {
+    const User         = require("../models/User");          // ← add this
+    const Post         = require("../models/Post");          // ← add this
+    const GroupPost    = require("../models/GroupPost");     // ← add this
+    const Group        = require("../models/Group");         // ← add this
+    const Notification = require("../models/Notification"); // ← add this
+
     const { pseudonym } = req.body;
 
     if (!pseudonym || !pseudonym.trim()) {
