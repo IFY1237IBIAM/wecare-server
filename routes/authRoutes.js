@@ -6,7 +6,7 @@ const { validateEmail } = require("../middleware/validators");
 const rateLimit = require("express-rate-limit");
 const { getClientIp } = require("../middleware/rateLimiters");
 
-// 5 signups per hour per IP — generous for real users, stops bot account creation
+// 5 signups per hour per IP
 const signupLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 5,
@@ -29,14 +29,16 @@ router.put ("/presence",     protect, authController.updatePresence);
 router.put ("/offline",      protect, authController.setOffline);
 router.put ("/online-status-privacy", protect, authController.toggleOnlineStatusPrivacy);
 router.put ("/bio",          protect, authController.updateBio);
-// PUT /api/auth/update-pseudonym
+
+// ── PUT /api/auth/update-pseudonym ────────────────────────────────────────
 router.put("/update-pseudonym", protect, async (req, res) => {
   try {
-    const User         = require("../models/User");          // ← add this
-    const Post         = require("../models/Post");          // ← add this
-    const GroupPost    = require("../models/GroupPost");     // ← add this
-    const Group        = require("../models/Group");         // ← add this
-    const Notification = require("../models/Notification"); // ← add this
+    // ── All requires at the top — no duplicates ──
+    const User         = require("../models/User");
+    const Post         = require("../models/Post");
+    const GroupPost    = require("../models/GroupPost");
+    const Group        = require("../models/Group");
+    const Notification = require("../models/Notification");
 
     const { pseudonym } = req.body;
 
@@ -53,7 +55,7 @@ router.put("/update-pseudonym", protect, async (req, res) => {
       });
     }
 
-    // Only letters, numbers, underscores — no spaces or special chars
+    // Only letters, numbers, underscores
     if (!/^[a-zA-Z0-9_]+$/.test(clean)) {
       return res.status(400).json({
         message: "Only letters, numbers, and underscores allowed",
@@ -61,12 +63,15 @@ router.put("/update-pseudonym", protect, async (req, res) => {
     }
 
     // Reserved words
-    const reserved = ["admin", "hushcircle", "moderator", "support", "system", "bot", "Circle_Keeper", "HushCircle"];
+    const reserved = [
+      "admin", "hushcircle", "moderator", "support",
+      "system", "bot", "circle_keeper",
+    ];
     if (reserved.includes(clean.toLowerCase())) {
       return res.status(400).json({ message: "That name is reserved" });
     }
 
-    // Check uniqueness (case-insensitive)
+    // Uniqueness check (case-insensitive)
     const existing = await User.findOne({
       pseudonym: { $regex: new RegExp(`^${clean}$`, "i") },
       _id: { $ne: req.user._id },
@@ -80,49 +85,44 @@ router.put("/update-pseudonym", protect, async (req, res) => {
 
     const oldPseudonym = req.user.pseudonym;
 
-    // Update User
+    // ── Update User ───────────────────────────────────────────────────
     await User.findByIdAndUpdate(req.user._id, { pseudonym: clean });
 
     // ── Cascade update across all collections ─────────────────────────
 
-    const Post         = require("../models/Post");
-    const GroupPost    = require("../models/GroupPost");
-    const Group        = require("../models/Group");
-    const Notification = require("../models/Notification");
-
-    // Update pseudonym on all their posts
+    // All their posts
     await Post.updateMany(
       { author: req.user._id },
       { $set: { pseudonym: clean } }
     );
 
-    // Update pseudonym on all comments they made on any post
+    // All comments they made
     await Post.updateMany(
       { "comments.author": req.user._id },
       { $set: { "comments.$[elem].pseudonym": clean } },
       { arrayFilters: [{ "elem.author": req.user._id }] }
     );
 
-    // Update pseudonym on all replies they made
+    // All replies they made
     await Post.updateMany(
       { "comments.replies.author": req.user._id },
       { $set: { "comments.$[].replies.$[reply].pseudonym": clean } },
       { arrayFilters: [{ "reply.author": req.user._id }] }
     );
 
-    // Update pseudonym on group posts/messages
+    // Group chat messages
     await GroupPost.updateMany(
       { author: req.user._id },
       { $set: { pseudonym: clean } }
     );
 
-    // Update creatorPseudonym on any groups they created
+    // Groups they created
     await Group.updateMany(
       { creator: req.user._id },
       { $set: { creatorPseudonym: clean } }
     );
 
-    // Update senderPseudonym on notifications they sent
+    // Notifications they sent
     await Notification.updateMany(
       { sender: req.user._id },
       { $set: { senderPseudonym: clean } }
@@ -137,8 +137,9 @@ router.put("/update-pseudonym", protect, async (req, res) => {
     return res.status(500).json({ message: e.message });
   }
 });
+
 router.patch("/clear-reinstated", protect, authController.clearReinstatedStatus);
-router.get ("/user/:pseudonym", protect, authController.getUserByPseudonym);
-router.get ("/search-users", protect, authController.searchUsers);
+router.get ("/user/:pseudonym",   protect, authController.getUserByPseudonym);
+router.get ("/search-users",      protect, authController.searchUsers);
 
 module.exports = router;
