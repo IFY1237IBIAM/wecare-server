@@ -6,7 +6,6 @@ const { validateEmail } = require("../middleware/validators");
 const rateLimit = require("express-rate-limit");
 const { getClientIp } = require("../middleware/rateLimiters");
 
-// 5 signups per hour per IP
 const signupLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 5,
@@ -33,7 +32,6 @@ router.put ("/bio",          protect, authController.updateBio);
 // ── PUT /api/auth/update-pseudonym ────────────────────────────────────────
 router.put("/update-pseudonym", protect, async (req, res) => {
   try {
-    // ── All requires at the top — no duplicates ──
     const User         = require("../models/User");
     const Post         = require("../models/Post");
     const GroupPost    = require("../models/GroupPost");
@@ -48,21 +46,18 @@ router.put("/update-pseudonym", protect, async (req, res) => {
 
     const clean = pseudonym.trim();
 
-    // Length check
     if (clean.length < 3 || clean.length > 20) {
       return res.status(400).json({
         message: "Pseudonym must be between 3 and 20 characters",
       });
     }
 
-    // Only letters, numbers, underscores
     if (!/^[a-zA-Z0-9_]+$/.test(clean)) {
       return res.status(400).json({
         message: "Only letters, numbers, and underscores allowed",
       });
     }
 
-    // Reserved words
     const reserved = [
       "admin", "hushcircle", "moderator", "support",
       "system", "bot", "circle_keeper",
@@ -71,7 +66,6 @@ router.put("/update-pseudonym", protect, async (req, res) => {
       return res.status(400).json({ message: "That name is reserved" });
     }
 
-    // Uniqueness check (case-insensitive)
     const existing = await User.findOne({
       pseudonym: { $regex: new RegExp(`^${clean}$`, "i") },
       _id: { $ne: req.user._id },
@@ -88,53 +82,61 @@ router.put("/update-pseudonym", protect, async (req, res) => {
     // ── Update User ───────────────────────────────────────────────────
     await User.findByIdAndUpdate(req.user._id, { pseudonym: clean });
 
-    // ── Cascade update across all collections ─────────────────────────
-
-    // All their posts
+    // ── 1. Posts authored by this user ────────────────────────────────
     await Post.updateMany(
       { author: req.user._id },
       { $set: { pseudonym: clean } }
     );
 
-    // All comments they made
+    // ── 2. Comments authored by this user ─────────────────────────────
     await Post.updateMany(
       { "comments.author": req.user._id },
       { $set: { "comments.$[elem].pseudonym": clean } },
       { arrayFilters: [{ "elem.author": req.user._id }] }
     );
 
-    // All replies they made
-    // All replies they made — only on posts that actually have replies
-await Post.updateMany(
-  {
-    "comments": {
-      $elemMatch: {
-        "replies": {
-          $elemMatch: { author: req.user._id }
+    // ── 3. Replies — done in JS to avoid MongoDB path errors ──────────
+    // MongoDB throws when $[] touches comments with no replies field.
+    // Fetch only posts that actually have a matching reply, update in JS.
+    const postsWithReplies = await Post.find({
+      comments: {
+        $elemMatch: {
+          replies: {
+            $elemMatch: { author: req.user._id },
+          },
+        },
+      },
+    }).select("comments");
+
+    for (const post of postsWithReplies) {
+      let changed = false;
+      for (const comment of post.comments) {
+        if (!Array.isArray(comment.replies)) continue;
+        for (const reply of comment.replies) {
+          if (reply.author && reply.author.toString() === req.user._id.toString()) {
+            reply.pseudonym = clean;
+            changed = true;
+          }
         }
       }
+      if (changed) {
+        await post.save({ validateBeforeSave: false });
+      }
     }
-  },
-  { $set: { "comments.$[].replies.$[reply].pseudonym": clean } },
-  {
-    arrayFilters: [{ "reply.author": req.user._id }],
-    multi: true,
-  }
-);
 
-    // Group chat messages
+    // ── 4. Group chat messages ────────────────────────────────────────
     await GroupPost.updateMany(
       { author: req.user._id },
       { $set: { pseudonym: clean } }
     );
 
-    // Groups they created
+    // ── 5. Groups they created ────────────────────────────────────────
     await Group.updateMany(
       { creator: req.user._id },
       { $set: { creatorPseudonym: clean } }
     );
 
-    // Notifications they sent
+    // ── 6. Notifications they sent ────────────────────────────────────
     await Notification.updateMany(
       { sender: req.user._id },
       { $set: { senderPseudonym: clean } }
