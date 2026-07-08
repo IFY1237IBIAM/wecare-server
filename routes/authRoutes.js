@@ -55,7 +55,7 @@ router.put("/update-pseudonym", protect, async (req, res) => {
     }
 
     // Reserved words
-    const reserved = ["admin", "hushcircle", "moderator", "support", "system", "bot", Circle_Keeper, HushCircle];
+    const reserved = ["admin", "hushcircle", "moderator", "support", "system", "bot", "Circle_Keeper", "HushCircle"];
     if (reserved.includes(clean.toLowerCase())) {
       return res.status(400).json({ message: "That name is reserved" });
     }
