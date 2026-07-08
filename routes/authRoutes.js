@@ -104,11 +104,23 @@ router.put("/update-pseudonym", protect, async (req, res) => {
     );
 
     // All replies they made
-    await Post.updateMany(
-      { "comments.replies.author": req.user._id },
-      { $set: { "comments.$[].replies.$[reply].pseudonym": clean } },
-      { arrayFilters: [{ "reply.author": req.user._id }] }
-    );
+    // All replies they made — only on posts that actually have replies
+await Post.updateMany(
+  {
+    "comments": {
+      $elemMatch: {
+        "replies": {
+          $elemMatch: { author: req.user._id }
+        }
+      }
+    }
+  },
+  { $set: { "comments.$[].replies.$[reply].pseudonym": clean } },
+  {
+    arrayFilters: [{ "reply.author": req.user._id }],
+    multi: true,
+  }
+);
 
     // Group chat messages
     await GroupPost.updateMany(
