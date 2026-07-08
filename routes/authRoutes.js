@@ -1,3 +1,4 @@
+
 const express = require("express");
 const router = express.Router();
 const authController = require("../controllers/authController");
@@ -66,6 +67,7 @@ router.put("/update-pseudonym", protect, async (req, res) => {
       return res.status(400).json({ message: "That name is reserved" });
     }
 
+    // Uniqueness check (case-insensitive)
     const existing = await User.findOne({
       pseudonym: { $regex: new RegExp(`^${clean}$`, "i") },
       _id: { $ne: req.user._id },
@@ -77,32 +79,58 @@ router.put("/update-pseudonym", protect, async (req, res) => {
       });
     }
 
+    // Store old pseudonym BEFORE updating — used for cascade matching
     const oldPseudonym = req.user.pseudonym;
 
-    // ── Update User ───────────────────────────────────────────────────
+    // ── 1. Update User ────────────────────────────────────────────────
     await User.findByIdAndUpdate(req.user._id, { pseudonym: clean });
 
-    // ── 1. Posts authored by this user ────────────────────────────────
+    // ── 2. Posts authored by this user ────────────────────────────────
     await Post.updateMany(
-      { author: req.user._id },
+      {
+        $or: [
+          { author: req.user._id },
+          { pseudonym: oldPseudonym },
+        ],
+      },
       { $set: { pseudonym: clean } }
     );
 
-    // ── 2. Comments authored by this user ─────────────────────────────
+    // ── 3. Comments — match by author ID OR old pseudonym ────────────
+    // The $or fallback catches comments where author field is missing
+    // or stored inconsistently in older documents
     await Post.updateMany(
-      { "comments.author": req.user._id },
+      {
+        $or: [
+          { "comments.author": req.user._id },
+          { "comments.pseudonym": oldPseudonym },
+        ],
+      },
       { $set: { "comments.$[elem].pseudonym": clean } },
-      { arrayFilters: [{ "elem.author": req.user._id }] }
+      {
+        arrayFilters: [
+          {
+            $or: [
+              { "elem.author": req.user._id },
+              { "elem.pseudonym": oldPseudonym },
+            ],
+          },
+        ],
+      }
     );
 
-    // ── 3. Replies — done in JS to avoid MongoDB path errors ──────────
-    // MongoDB throws when $[] touches comments with no replies field.
-    // Fetch only posts that actually have a matching reply, update in JS.
+    // ── 4. Replies — done in JS to avoid MongoDB path errors ──────────
+    // Matches by author ID OR old pseudonym for same reason as above
     const postsWithReplies = await Post.find({
       comments: {
         $elemMatch: {
           replies: {
-            $elemMatch: { author: req.user._id },
+            $elemMatch: {
+              $or: [
+                { author: req.user._id },
+                { pseudonym: oldPseudonym },
+              ],
+            },
           },
         },
       },
@@ -113,7 +141,11 @@ router.put("/update-pseudonym", protect, async (req, res) => {
       for (const comment of post.comments) {
         if (!Array.isArray(comment.replies)) continue;
         for (const reply of comment.replies) {
-          if (reply.author && reply.author.toString() === req.user._id.toString()) {
+          const authorMatch =
+            reply.author &&
+            reply.author.toString() === req.user._id.toString();
+          const pseudonymMatch = reply.pseudonym === oldPseudonym;
+          if (authorMatch || pseudonymMatch) {
             reply.pseudonym = clean;
             changed = true;
           }
@@ -124,21 +156,31 @@ router.put("/update-pseudonym", protect, async (req, res) => {
       }
     }
 
-    // ── 4. Group chat messages ────────────────────────────────────────
+    // ── 5. Group chat messages ────────────────────────────────────────
     await GroupPost.updateMany(
-      { author: req.user._id },
+      {
+        $or: [
+          { author: req.user._id },
+          { pseudonym: oldPseudonym },
+        ],
+      },
       { $set: { pseudonym: clean } }
     );
 
-    // ── 5. Groups they created ────────────────────────────────────────
+    // ── 6. Groups they created ────────────────────────────────────────
     await Group.updateMany(
       { creator: req.user._id },
       { $set: { creatorPseudonym: clean } }
     );
 
-    // ── 6. Notifications they sent ────────────────────────────────────
+    // ── 7. Notifications they sent ────────────────────────────────────
     await Notification.updateMany(
-      { sender: req.user._id },
+      {
+        $or: [
+          { sender: req.user._id },
+          { senderPseudonym: oldPseudonym },
+        ],
+      },
       { $set: { senderPseudonym: clean } }
     );
 
