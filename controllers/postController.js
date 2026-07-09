@@ -80,7 +80,8 @@ exports.getFeed = async (req, res) => {
   try {
     const User = require("../models/User");
     const limit = parseInt(req.query.limit) || 15;
-    const lastId = req.query.lastId;
+    const lastId = req.query.lastId;   // for pagination (older posts)
+    const sinceId = req.query.sinceId; // for refresh (newer posts only)
     const userId = req.user._id;
 
     const user = await User.findById(userId).select("savedPosts");
@@ -95,7 +96,13 @@ exports.getFeed = async (req, res) => {
     );
 
     const query = { author: { $ne: userId } };
-    if (lastId) query._id = { $lt: lastId };
+    if (lastId) {
+      // Load older posts (scroll down pagination — existing behaviour)
+      query._id = { $lt: lastId };
+    } else if (sinceId) {
+      // Load only posts newer than sinceId (refresh / app reopen)
+      query._id = { $gt: sinceId };
+    }
 
     const posts = await Post.find(query)
       .sort({ createdAt: -1 })
@@ -103,7 +110,11 @@ exports.getFeed = async (req, res) => {
       .lean();
 
     const repostQuery = { user: { $ne: userId } };
-    if (lastId) repostQuery._id = { $lt: lastId };
+    if (lastId) {
+      repostQuery._id = { $lt: lastId };
+    } else if (sinceId) {
+      repostQuery._id = { $gt: sinceId };
+    }
 
     const reposts = await Repost.find(repostQuery)
       .sort({ createdAt: -1 })
@@ -262,7 +273,6 @@ exports.getFeed = async (req, res) => {
     return res.status(500).json({ message: error.message });
   }
 };
-
 // @route GET /api/posts/hashtag/:tag
 exports.getPostsByHashtag = async (req, res) => {
   try {
