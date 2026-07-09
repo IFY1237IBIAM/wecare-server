@@ -58,6 +58,7 @@ const userSchema = new mongoose.Schema(
     // ── Passkey ───────────────────────────────────────────────────────────────
     passkeyEnabled:    { type: Boolean, default: false },
     passwordChangedAt: { type: Date,    default: null  },
+    pseudonymChangedAt: { type: Date,    default: null },
 
     // ── Profile ───────────────────────────────────────────────────────────────
     bio:             { type: String,  maxlength: 100, default: "" },

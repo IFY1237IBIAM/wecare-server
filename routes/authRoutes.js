@@ -1,4 +1,3 @@
-
 const express = require("express");
 const router = express.Router();
 const authController = require("../controllers/authController");
@@ -47,18 +46,21 @@ router.put("/update-pseudonym", protect, async (req, res) => {
 
     const clean = pseudonym.trim();
 
+    // ── Length check ──────────────────────────────────────────────────
     if (clean.length < 3 || clean.length > 20) {
       return res.status(400).json({
         message: "Pseudonym must be between 3 and 20 characters",
       });
     }
 
+    // ── Characters check ──────────────────────────────────────────────
     if (!/^[a-zA-Z0-9_]+$/.test(clean)) {
       return res.status(400).json({
         message: "Only letters, numbers, and underscores allowed",
       });
     }
 
+    // ── Reserved words ────────────────────────────────────────────────
     const reserved = [
       "admin", "hushcircle", "moderator", "support",
       "system", "bot", "circle_keeper",
@@ -67,7 +69,36 @@ router.put("/update-pseudonym", protect, async (req, res) => {
       return res.status(400).json({ message: "That name is reserved" });
     }
 
-    // Uniqueness check (case-insensitive)
+    // ── 30-day rate limit ─────────────────────────────────────────────
+    const currentUser = await User.findById(req.user._id).select(
+      "pseudonym pseudonymChangedAt"
+    );
+
+    if (currentUser.pseudonymChangedAt) {
+      const daysSinceChange = Math.floor(
+        (Date.now() - new Date(currentUser.pseudonymChangedAt).getTime()) /
+          (1000 * 60 * 60 * 24)
+      );
+      const daysRemaining = 30 - daysSinceChange;
+
+      if (daysRemaining > 0) {
+        const nextChangeDate = new Date(currentUser.pseudonymChangedAt);
+        nextChangeDate.setDate(nextChangeDate.getDate() + 30);
+        const formattedDate = nextChangeDate.toLocaleDateString("en-US", {
+          month: "long",
+          day: "numeric",
+          year: "numeric",
+        });
+
+        return res.status(429).json({
+          message: `You can only change your pseudonym once every 30 days. You can change it again on ${formattedDate}.`,
+          nextChangeDate: nextChangeDate.toISOString(),
+          daysRemaining,
+        });
+      }
+    }
+
+    // ── Uniqueness check (case-insensitive) ───────────────────────────
     const existing = await User.findOne({
       pseudonym: { $regex: new RegExp(`^${clean}$`, "i") },
       _id: { $ne: req.user._id },
@@ -79,11 +110,14 @@ router.put("/update-pseudonym", protect, async (req, res) => {
       });
     }
 
-    // Store old pseudonym BEFORE updating — used for cascade matching
-    const oldPseudonym = req.user.pseudonym;
+    // Store old pseudonym BEFORE updating
+    const oldPseudonym = currentUser.pseudonym;
 
-    // ── 1. Update User ────────────────────────────────────────────────
-    await User.findByIdAndUpdate(req.user._id, { pseudonym: clean });
+    // ── 1. Update User + record change timestamp ──────────────────────
+    await User.findByIdAndUpdate(req.user._id, {
+      pseudonym: clean,
+      pseudonymChangedAt: new Date(),
+    });
 
     // ── 2. Posts authored by this user ────────────────────────────────
     await Post.updateMany(
@@ -97,8 +131,6 @@ router.put("/update-pseudonym", protect, async (req, res) => {
     );
 
     // ── 3. Comments — match by author ID OR old pseudonym ────────────
-    // The $or fallback catches comments where author field is missing
-    // or stored inconsistently in older documents
     await Post.updateMany(
       {
         $or: [
@@ -120,7 +152,6 @@ router.put("/update-pseudonym", protect, async (req, res) => {
     );
 
     // ── 4. Replies — done in JS to avoid MongoDB path errors ──────────
-    // Matches by author ID OR old pseudonym for same reason as above
     const postsWithReplies = await Post.find({
       comments: {
         $elemMatch: {

@@ -160,26 +160,27 @@ exports.login = async (req, res) => {
 exports.refreshUser = async (req, res) => {
   try {
     const user = await User.findById(req.user._id).select(
-      "+showOnlineStatus +isOnline +lastSeen +role +appealStatus +isBanned +confirmedViolations +violations +bio"
+      "pseudonym pseudonymChangedAt +showOnlineStatus +isOnline +lastSeen +role +appealStatus +isBanned +confirmedViolations +violations +bio"
     );
     if (!user) return res.status(404).json({ message: "User not found" });
     return res.json({
-      user: {
-        id:                  user._id,
-        _id:                 user._id,
-        pseudonym:           user.pseudonym,
-        avatar:              user.avatar,
-        role:                user.role,
-        isBanned:            user.isBanned,
-        confirmedViolations: user.confirmedViolations || 0,
-        violations:          user.violations          || [],
-        appealStatus:        user.appealStatus        || "none",
-        showOnlineStatus:    user.showOnlineStatus,
-        isOnline:            user.isOnline,
-        lastSeen:            user.lastSeen,
-        bio:                 user.bio                 || "",
-      },
-    });
+  user: {
+    id:                  user._id,
+    _id:                 user._id,
+    pseudonym:           user.pseudonym,
+    avatar:              user.avatar,
+    role:                user.role,
+    isBanned:            user.isBanned,
+    confirmedViolations: user.confirmedViolations || 0,
+    violations:          user.violations || [],
+    appealStatus:        user.appealStatus || "none",
+    showOnlineStatus:    user.showOnlineStatus,
+    isOnline:            user.isOnline,
+    lastSeen:            user.lastSeen,
+    bio:                 user.bio || "",
+    pseudonymChangedAt:  user.pseudonymChangedAt || null,
+  },
+});
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
