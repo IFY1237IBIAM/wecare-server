@@ -46,21 +46,19 @@ router.put("/update-pseudonym", protect, async (req, res) => {
 
     const clean = pseudonym.trim();
 
-    // ── Length check ──────────────────────────────────────────────────
+    // ── Validation ────────────────────────────────────────────────────
     if (clean.length < 3 || clean.length > 20) {
       return res.status(400).json({
         message: "Pseudonym must be between 3 and 20 characters",
       });
     }
 
-    // ── Characters check ──────────────────────────────────────────────
     if (!/^[a-zA-Z0-9_]+$/.test(clean)) {
       return res.status(400).json({
         message: "Only letters, numbers, and underscores allowed",
       });
     }
 
-    // ── Reserved words ────────────────────────────────────────────────
     const reserved = [
       "admin", "hushcircle", "moderator", "support",
       "system", "bot", "circle_keeper",
@@ -69,11 +67,16 @@ router.put("/update-pseudonym", protect, async (req, res) => {
       return res.status(400).json({ message: "That name is reserved" });
     }
 
-    // ── 30-day rate limit ─────────────────────────────────────────────
+    // ── Fetch current user from DB (not from JWT — JWT may be stale) ──
     const currentUser = await User.findById(req.user._id).select(
       "pseudonym pseudonymChangedAt"
     );
 
+    if (!currentUser) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // ── 30-day cooldown check ─────────────────────────────────────────
     if (currentUser.pseudonymChangedAt) {
       const daysSinceChange = Math.floor(
         (Date.now() - new Date(currentUser.pseudonymChangedAt).getTime()) /
@@ -89,7 +92,6 @@ router.put("/update-pseudonym", protect, async (req, res) => {
           day: "numeric",
           year: "numeric",
         });
-
         return res.status(429).json({
           message: `You can only change your pseudonym once every 30 days. You can change it again on ${formattedDate}.`,
           nextChangeDate: nextChangeDate.toISOString(),
@@ -98,7 +100,7 @@ router.put("/update-pseudonym", protect, async (req, res) => {
       }
     }
 
-    // ── Uniqueness check (case-insensitive) ───────────────────────────
+    // ── Uniqueness check ──────────────────────────────────────────────
     const existing = await User.findOne({
       pseudonym: { $regex: new RegExp(`^${clean}$`, "i") },
       _id: { $ne: req.user._id },
@@ -110,16 +112,17 @@ router.put("/update-pseudonym", protect, async (req, res) => {
       });
     }
 
-    // Store old pseudonym BEFORE updating
+    // ── Use DB pseudonym as oldPseudonym (not JWT — always accurate) ──
     const oldPseudonym = currentUser.pseudonym;
+    const userIdStr    = req.user._id.toString();
 
-    // ── 1. Update User + record change timestamp ──────────────────────
+    // ── 1. Update User + record timestamp ─────────────────────────────
     await User.findByIdAndUpdate(req.user._id, {
       pseudonym: clean,
       pseudonymChangedAt: new Date(),
     });
 
-    // ── 2. Posts authored by this user ────────────────────────────────
+    // ── 2. Update posts they authored ─────────────────────────────────
     await Post.updateMany(
       {
         $or: [
@@ -130,58 +133,52 @@ router.put("/update-pseudonym", protect, async (req, res) => {
       { $set: { pseudonym: clean } }
     );
 
-    // ── 3. Comments — match by author ID OR old pseudonym ────────────
-    await Post.updateMany(
-      {
-        $or: [
-          { "comments.author": req.user._id },
-          { "comments.pseudonym": oldPseudonym },
-        ],
-      },
-      { $set: { "comments.$[elem].pseudonym": clean } },
-      {
-        arrayFilters: [
-          {
-            $or: [
-              { "elem.author": req.user._id },
-              { "elem.pseudonym": oldPseudonym },
-            ],
-          },
-        ],
-      }
-    );
+    // ── 3 & 4. Update comments AND replies fully in JavaScript ────────
+    // We do this entirely in JS — no MongoDB array filters —
+    // because older documents may store author as string/ObjectId
+    // inconsistently, making $[] array filters unreliable.
+    //
+    // We fetch ALL posts that contain this user's old pseudonym
+    // anywhere in comments or replies, then fix them in memory.
 
-    // ── 4. Replies — done in JS to avoid MongoDB path errors ──────────
-    const postsWithReplies = await Post.find({
-      comments: {
-        $elemMatch: {
-          replies: {
-            $elemMatch: {
-              $or: [
-                { author: req.user._id },
-                { pseudonym: oldPseudonym },
-              ],
-            },
-          },
-        },
-      },
+    const postsToFix = await Post.find({
+      $or: [
+        { "comments.pseudonym": oldPseudonym },
+        { "comments.author":    req.user._id },
+        { "comments.replies.pseudonym": oldPseudonym },
+        { "comments.replies.author":    req.user._id },
+      ],
     }).select("comments");
 
-    for (const post of postsWithReplies) {
+    for (const post of postsToFix) {
       let changed = false;
+
       for (const comment of post.comments) {
-        if (!Array.isArray(comment.replies)) continue;
-        for (const reply of comment.replies) {
-          const authorMatch =
-            reply.author &&
-            reply.author.toString() === req.user._id.toString();
-          const pseudonymMatch = reply.pseudonym === oldPseudonym;
-          if (authorMatch || pseudonymMatch) {
-            reply.pseudonym = clean;
-            changed = true;
+        // Fix comment pseudonym
+        const commentAuthorMatch =
+          comment.author && comment.author.toString() === userIdStr;
+        const commentPseudonymMatch = comment.pseudonym === oldPseudonym;
+
+        if (commentAuthorMatch || commentPseudonymMatch) {
+          comment.pseudonym = clean;
+          changed = true;
+        }
+
+        // Fix reply pseudonyms inside this comment
+        if (Array.isArray(comment.replies)) {
+          for (const reply of comment.replies) {
+            const replyAuthorMatch =
+              reply.author && reply.author.toString() === userIdStr;
+            const replyPseudonymMatch = reply.pseudonym === oldPseudonym;
+
+            if (replyAuthorMatch || replyPseudonymMatch) {
+              reply.pseudonym = clean;
+              changed = true;
+            }
           }
         }
       }
+
       if (changed) {
         await post.save({ validateBeforeSave: false });
       }
@@ -191,7 +188,7 @@ router.put("/update-pseudonym", protect, async (req, res) => {
     await GroupPost.updateMany(
       {
         $or: [
-          { author: req.user._id },
+          { author:    req.user._id },
           { pseudonym: oldPseudonym },
         ],
       },
@@ -200,7 +197,12 @@ router.put("/update-pseudonym", protect, async (req, res) => {
 
     // ── 6. Groups they created ────────────────────────────────────────
     await Group.updateMany(
-      { creator: req.user._id },
+      {
+        $or: [
+          { creator:           req.user._id },
+          { creatorPseudonym:  oldPseudonym },
+        ],
+      },
       { $set: { creatorPseudonym: clean } }
     );
 
@@ -208,7 +210,7 @@ router.put("/update-pseudonym", protect, async (req, res) => {
     await Notification.updateMany(
       {
         $or: [
-          { sender: req.user._id },
+          { sender:          req.user._id },
           { senderPseudonym: oldPseudonym },
         ],
       },
