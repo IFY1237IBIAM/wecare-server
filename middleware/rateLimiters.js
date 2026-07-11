@@ -13,9 +13,16 @@
  *   2. THIS FILE: explicit getClientIp() helper that always reads the
  *      FIRST entry in X-Forwarded-For, which is the original client,
  *      used as a stable keyGenerator for every limiter below.
+ *
+ * IPv6 FIX: express-rate-limit v7+ requires IPv6 addresses to be
+ * normalized through its ipKeyGenerator() helper before use as a rate
+ * limit key. Without this, IPv6 clients can rotate addresses within
+ * their assigned block and bypass limits entirely. IPv4 addresses pass
+ * through ipKeyGenerator() unchanged, so this is safe for all clients.
  */
 
 const rateLimit = require("express-rate-limit");
+const { ipKeyGenerator } = require("express-rate-limit");
 
 function limitMessage(message) {
   return { message };
@@ -24,12 +31,15 @@ function limitMessage(message) {
 // ── Stable client IP extraction ────────────────────────────────────────────────
 // The first entry in X-Forwarded-For is always the original client,
 // regardless of how many internal proxy hops are added after it.
+// ipKeyGenerator() normalizes IPv6 addresses (collapses to a /64 subnet)
+// so rotating addresses within one block can't be used to dodge limits;
+// IPv4 addresses pass through unchanged.
 function getClientIp(req) {
   const forwarded = req.headers["x-forwarded-for"];
-  if (forwarded) {
-    return forwarded.split(",")[0].trim();
-  }
-  return req.ip || req.connection?.remoteAddress || "unknown";
+  const rawIp = forwarded
+    ? forwarded.split(",")[0].trim()
+    : req.ip || req.connection?.remoteAddress || "unknown";
+  return ipKeyGenerator(rawIp);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
