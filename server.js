@@ -142,12 +142,13 @@ app.use("/api/users", require("./routes/avatarVibeRoute"));
 app.use("/api/recovery",      require("./routes/accountRecoveryRoutes"));
 app.use("/api/activity",      require("./routes/loginActivityRoutes"));
 app.use("/api/email",         emailRoutes);
+app.use("/", require("./routes/postPreviewRoutes"));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WEB FALLBACK
 // ─────────────────────────────────────────────────────────────────────────────
 app.use(express.static(path.join(__dirname, "public")));
-app.get("/post/:postId*", (req, res) => res.sendFile(path.join(__dirname, "public", "post", "index.html")));
+// app.get("/post/:postId*", (req, res) => res.sendFile(path.join(__dirname, "public", "post", "index.html")));
 app.get("/post",          (req, res) => res.sendFile(path.join(__dirname, "public", "post", "index.html")));
 
 // ─────────────────────────────────────────────────────────────────────────────
