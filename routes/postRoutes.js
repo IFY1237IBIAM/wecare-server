@@ -7,7 +7,7 @@ router.get("/search", protect, postController.searchPosts);
 router.get("/hashtag/:tag", protect, postController.getPostsByHashtag);
 router.get("/feed", protect, postController.getFeed);
 router.get("/", protect, postController.getFeed);
-router.get("/:id/comments", protect, getPostComments);
+router.get("/:id/comments", protect, postController.getPostComments);
 router.get("/:id", protect, async (req, res) => {
   try {
     const Post = require("../models/Post");
