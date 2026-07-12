@@ -25,7 +25,7 @@ exports.createPost = async (req, res) => {
     }
 
     const extracted = (content.match(/#\w+/g) || [])
-      .map((t) => t.toLowerCase())
+      .map((t) => t.slice(1).toLowerCase())  // ← strip # before saving
       .filter((t) => t.length <= 32)
       .slice(0, 5);
     const hashtags = [...new Set(extracted)];
