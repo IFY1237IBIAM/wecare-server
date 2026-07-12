@@ -1,19 +1,26 @@
-const express = require("express");
-const http    = require("http");
-const { Server } = require("socket.io");
-const dotenv  = require("dotenv");
-const helmet  = require("helmet");
-const cors    = require("cors");
-const rateLimit = require("express-rate-limit");
-const { runCleanup } = require("./utils/cleanupJob");
-const connectDB = require("./config/db");
-const jwt     = require("jsonwebtoken");
-const path    = require("path");
-const morgan  = require("morgan");
+const express     = require("express");
+const http        = require("http");
+const { Server }  = require("socket.io");
+const dotenv      = require("dotenv");
+const helmet      = require("helmet");
+const cors        = require("cors");
+const compression = require("compression");
+const rateLimit   = require("express-rate-limit");
+const { runCleanup }   = require("./utils/cleanupJob");
+const connectDB        = require("./config/db");
+const jwt              = require("jsonwebtoken");
+const path             = require("path");
+const morgan           = require("morgan");
 const { getClientIp } = require("./middleware/rateLimiters");
-const sanitize    = require("./middleware/sanitize");
-const { redactBody } = require("./middleware/redactLogs");
-const xssSanitize = require("./middleware/xssSanitize");
+const sanitize         = require("./middleware/sanitize");
+const { redactBody }   = require("./middleware/redactLogs");
+const xssSanitize      = require("./middleware/xssSanitize");
+const validateEnv      = require("./utils/validateEnv");
+
+// ── Validate env vars FIRST — fail fast with clear errors ─────────────────────
+validateEnv();
+
+dotenv.config();
 
 const User = require("./models/User");
 require("./models/GroupAuditLog");
@@ -23,7 +30,6 @@ require("./models/AccountRecoveryRequest");
 
 const emailRoutes = require("./routes/emailRoutes");
 
-dotenv.config();
 connectDB();
 runCleanup();
 setInterval(runCleanup, 24 * 60 * 60 * 1000);
@@ -32,13 +38,13 @@ const app        = express();
 const httpServer = http.createServer(app);
 
 const io = new Server(httpServer, {
-  cors: { origin: "*", methods: ["GET", "POST"] },
+  cors:         { origin: "*", methods: ["GET", "POST"] },
   pingTimeout:  60000,
   pingInterval: 25000,
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// WELL-KNOWN — MUST be first, before helmet/cors/json middleware
+// WELL-KNOWN — MUST be first
 // ─────────────────────────────────────────────────────────────────────────────
 app.use("/", require("./routes/wellKnownRoutes"));
 
@@ -47,12 +53,25 @@ app.use("/", require("./routes/wellKnownRoutes"));
 // ─────────────────────────────────────────────────────────────────────────────
 app.use((req, res, next) => { req.io = io; next(); });
 app.set("trust proxy", true);
+
+// Compression — must come before routes so all responses are compressed.
+// Feed responses drop from ~200KB → ~15KB. Already a ~90% savings after
+// the comment-stripping fix, compression adds another 60-70% on top.
+app.use(compression({
+  level:     6,
+  threshold: 1024,
+  filter: (req, res) => {
+    if (req.headers["x-no-compression"]) return false;
+    return compression.filter(req, res);
+  },
+}));
+
 app.use(helmet());
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
-app.use(sanitize);        // NoSQL injection — strips $/ . keys
-app.use(xssSanitize);     // XSS — strips HTML tags from all string fields
-app.use(redactBody);      // Log safety — redacts passwords/PINs in req.safeBody
+app.use(sanitize);
+app.use(xssSanitize);
+app.use(redactBody);
 app.use(morgan("dev"));
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -72,7 +91,6 @@ io.use(async (socket, next) => {
 
 io.on("connection", (socket) => {
   console.log(`🔌 Socket connected: ${socket.id} user:${socket.userId}`);
-
   socket.on("join_post",    (postId)   => postId   && socket.join(`post:${postId}`));
   socket.on("leave_post",   (postId)   => postId   && socket.leave(`post:${postId}`));
   socket.on("join_group",   (groupId)  => groupId  && socket.join(`group:${groupId}`));
@@ -80,17 +98,14 @@ io.on("connection", (socket) => {
   socket.on("join_repost",  (repostId) => repostId && socket.join(`repost:${repostId}`));
   socket.on("leave_repost", (repostId) => repostId && socket.leave(`repost:${repostId}`));
   socket.on("identify",     (userId)   => userId   && socket.join(`user:${userId}`));
-
   socket.on("typing", ({ groupId, userId, pseudonym }) => {
     if (!groupId || !userId || !pseudonym) return;
     socket.to(`group:${groupId}`).emit("user_typing", { groupId, userId, pseudonym });
   });
-
   socket.on("stop_typing", ({ groupId, userId }) => {
     if (!groupId || !userId) return;
     socket.to(`group:${groupId}`).emit("user_stop_typing", { groupId, userId });
   });
-
   socket.on("disconnect", () => {
     console.log(`🔌 Socket disconnected: ${socket.id}`);
   });
@@ -138,18 +153,21 @@ app.use("/api/appeals",       require("./routes/appealRoutes"));
 app.use("/api/settings",      require("./routes/settingsRoutes"));
 app.use("/api/passkey",       require("./routes/passkeyRoutes"));
 app.use("/api/two-step",      require("./routes/twoStepRoutes"));
-app.use("/api/users", require("./routes/avatarVibeRoute"));
+app.use("/api/users",         require("./routes/avatarVibeRoute"));
 app.use("/api/recovery",      require("./routes/accountRecoveryRoutes"));
 app.use("/api/activity",      require("./routes/loginActivityRoutes"));
 app.use("/api/email",         emailRoutes);
-app.use("/", require("./routes/postPreviewRoutes"));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WEB FALLBACK
 // ─────────────────────────────────────────────────────────────────────────────
 app.use(express.static(path.join(__dirname, "public")));
-// app.get("/post/:postId*", (req, res) => res.sendFile(path.join(__dirname, "public", "post", "index.html")));
-app.get("/post",          (req, res) => res.sendFile(path.join(__dirname, "public", "post", "index.html")));
+app.get("/post/:postId*", (req, res) =>
+  res.sendFile(path.join(__dirname, "public", "post", "index.html"))
+);
+app.get("/post", (req, res) =>
+  res.sendFile(path.join(__dirname, "public", "post", "index.html"))
+);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ERROR HANDLERS

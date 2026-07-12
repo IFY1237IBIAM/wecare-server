@@ -78,77 +78,75 @@ exports.createPost = async (req, res) => {
 // @route GET /api/posts
 exports.getFeed = async (req, res) => {
   try {
-    const User = require("../models/User");
-    const limit = parseInt(req.query.limit) || 15;
-    const lastId = req.query.lastId;   // for pagination (older posts)
-    const sinceId = req.query.sinceId; // for refresh (newer posts only)
-    const userId = req.user._id;
-
+    const User  = require("../models/User");
+    const limit  = parseInt(req.query.limit) || 15;
+    const lastId  = req.query.lastId;
+    const sinceId = req.query.sinceId;
+    const userId  = req.user._id;
+ 
     const user = await User.findById(userId).select("savedPosts");
     const savedSet = new Set(user.savedPosts.map((id) => id.toString()));
-
+ 
     const userReposts = await Repost.find({ user: userId })
       .select("originalPost")
       .lean();
-
     const repostedSet = new Set(
       userReposts.map((r) => r.originalPost.toString())
     );
-
+ 
     const query = { author: { $ne: userId } };
-    if (lastId) {
-      // Load older posts (scroll down pagination — existing behaviour)
-      query._id = { $lt: lastId };
-    } else if (sinceId) {
-      // Load only posts newer than sinceId (refresh / app reopen)
-      query._id = { $gt: sinceId };
-    }
-
+    if (lastId)   query._id = { $lt: lastId };
+    else if (sinceId) query._id = { $gt: sinceId };
+ 
+    // ── STRIP COMMENTS from the feed query ─────────────────────────────────
+    // Select everything EXCEPT the comments array.
+    // commentCount is kept so the PostCard can show "42 comments" button.
+    // The actual comments are fetched lazily when the user taps the button.
     const posts = await Post.find(query)
       .sort({ createdAt: -1 })
       .limit(limit)
+      .select("-comments")    // ← THE KEY CHANGE
       .lean();
-
+ 
     const repostQuery = { user: { $ne: userId } };
-    if (lastId) {
-      repostQuery._id = { $lt: lastId };
-    } else if (sinceId) {
-      repostQuery._id = { $gt: sinceId };
-    }
-
+    if (lastId)   repostQuery._id = { $lt: lastId };
+    else if (sinceId) repostQuery._id = { $gt: sinceId };
+ 
     const reposts = await Repost.find(repostQuery)
       .sort({ createdAt: -1 })
       .limit(limit)
-      .populate({ path: "originalPost", model: "Post" })
+      .populate({
+        path:   "originalPost",
+        model:  "Post",
+        select: "-comments",  // ← strip comments from reposts too
+      })
       .lean();
-
+ 
     const postsWithReactions = posts.map((post) => {
       const reactions = Array.isArray(post.reactions) ? post.reactions : [];
       const reactionCounts = {};
-
       reactions.forEach((r) => {
         if (r.type) reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1;
       });
-
       const userReactionObj = reactions.find(
         (r) => r.user && r.user.toString() === userId.toString()
       );
-
       return {
         ...post,
         reactions,
         reactionCounts,
-        totalReactions: reactions.length,
-        authorId: post.author?.toString(),
-        userReaction: userReactionObj?.type || null,
-        hasReacted: !!userReactionObj,
-        isSaved: savedSet.has(post._id.toString()),
-        isReposted: repostedSet.has(post._id.toString()),
-        isRepostItem: false,
-        allowReposts: post.allowReposts !== false,
+        totalReactions:  reactions.length,
+        authorId:        post.author?.toString(),
+        userReaction:    userReactionObj?.type || null,
+        hasReacted:      !!userReactionObj,
+        isSaved:         savedSet.has(post._id.toString()),
+        isReposted:      repostedSet.has(post._id.toString()),
+        isRepostItem:    false,
+        allowReposts:    post.allowReposts !== false,
+        comments:        [],   // ← always empty in feed, loaded lazily on tap
       };
     });
-
+ 
     const repostItems = reposts
       .filter((r) => r.originalPost && r.originalPost.allowReposts !== false)
       .map((r) => {
@@ -156,40 +154,38 @@ exports.getFeed = async (req, res) => {
         const reactions = Array.isArray(original.reactions)
           ? original.reactions
           : [];
-
         const reactionCounts = {};
         reactions.forEach((rx) => {
           if (rx.type) reactionCounts[rx.type] = (reactionCounts[rx.type] || 0) + 1;
         });
-
         const userReactionObj = reactions.find(
           (rx) => rx.user && rx.user.toString() === userId.toString()
         );
-
         return {
-          _id: r._id.toString(),
-          isRepostItem: true,
-          repostId: r._id.toString(),
+          _id:               r._id.toString(),
+          isRepostItem:      true,
+          repostId:          r._id.toString(),
           reposterPseudonym: r.pseudonym,
-          repostThought: r.thought || "",
-          repostCreatedAt: r.createdAt,
-          repostComments: r.repostComments || [],
+          repostThought:     r.thought || "",
+          repostCreatedAt:   r.createdAt,
+          repostComments:    [],   // ← empty in feed, loaded lazily
           repostCommentCount: r.repostCommentCount || 0,
           originalPost: {
             ...original,
             reactions,
             reactionCounts,
-            totalReactions: reactions.length,
-            authorId: original.author?.toString(),
-            userReaction: userReactionObj?.type || null,
-            hasReacted: !!userReactionObj,
-            isSaved: savedSet.has(original._id.toString()),
-            isReposted: repostedSet.has(original._id.toString()),
-            allowReposts: original.allowReposts !== false,
+            totalReactions:  reactions.length,
+            authorId:        original.author?.toString(),
+            userReaction:    userReactionObj?.type || null,
+            hasReacted:      !!userReactionObj,
+            isSaved:         savedSet.has(original._id.toString()),
+            isReposted:      repostedSet.has(original._id.toString()),
+            allowReposts:    original.allowReposts !== false,
+            comments:        [],  // ← empty in feed
           },
         };
       });
-
+ 
     const allItems = [...postsWithReactions, ...repostItems]
       .sort((a, b) => {
         const dateA = new Date(a.isRepostItem ? a.repostCreatedAt : a.createdAt);
@@ -197,123 +193,12 @@ exports.getFeed = async (req, res) => {
         return dateB - dateA;
       })
       .slice(0, limit);
-
-    // ─────────────────────────────────────────────
-    // ENHANCED: comment authors + ONLINE STATUS
-    // ─────────────────────────────────────────────
-
-    const pseudonyms = new Set();
-
-    allItems.forEach((item) => {
-      if (!item.isRepostItem && item.comments?.length) {
-        item.comments.forEach((c) => {
-          if (c.pseudonym) pseudonyms.add(c.pseudonym);
-          (c.replies || []).forEach((r) => {
-            if (r.pseudonym) pseudonyms.add(r.pseudonym);
-          });
-        });
-      }
-
-      if (item.isRepostItem && item.originalPost?.comments?.length) {
-        item.originalPost.comments.forEach((c) => {
-          if (c.pseudonym) pseudonyms.add(c.pseudonym);
-          (c.replies || []).forEach((r) => {
-            if (r.pseudonym) pseudonyms.add(r.pseudonym);
-          });
-        });
-      }
-
-      if (item.isRepostItem && item.repostComments?.length) {
-        item.repostComments.forEach((c) => {
-          if (c.pseudonym) pseudonyms.add(c.pseudonym);
-        });
-      }
-    });
-
-    if (pseudonyms.size > 0) {
-      const commentAuthors = await User.find({
-        pseudonym: { $in: Array.from(pseudonyms) },
-      }).select("pseudonym showOnlineStatus isOnline lastSeen");
-
-      const authorMap = {};
-      commentAuthors.forEach((a) => {
-        authorMap[a.pseudonym] = a;
-      });
-
-      allItems.forEach((item) => {
-        const enrich = (c) => ({
-          ...c,
-          showOnlineStatus: authorMap[c.pseudonym]?.showOnlineStatus || false,
-          isOnline: authorMap[c.pseudonym]?.isOnline || false,
-          lastSeen: authorMap[c.pseudonym]?.lastSeen || null,
-        });
-
-        if (!item.isRepostItem && item.comments?.length) {
-          item.comments = item.comments.map((c) => ({
-            ...enrich(c),
-            replies: (c.replies || []).map(enrich),
-          }));
-        }
-
-        if (item.isRepostItem && item.originalPost?.comments?.length) {
-          item.originalPost.comments = item.originalPost.comments.map((c) => ({
-            ...enrich(c),
-            replies: (c.replies || []).map(enrich),
-          }));
-        }
-
-        if (item.isRepostItem && item.repostComments?.length) {
-          item.repostComments = item.repostComments.map(enrich);
-        }
-      });
-    }
-
+ 
+    // NOTE: The online-status enrichment block for comment authors has been
+    // removed since we no longer send comments in the feed. This eliminates
+    // an additional User.find() query per feed request, further improving speed.
+ 
     return res.json({ posts: allItems });
-  } catch (error) {
-    return res.status(500).json({ message: error.message });
-  }
-};
-// @route GET /api/posts/hashtag/:tag
-exports.getPostsByHashtag = async (req, res) => {
-  try {
-    let tag = req.params.tag.toLowerCase();
-    if (!tag.startsWith("#")) tag = `#${tag}`;
-
-    const limit = parseInt(req.query.limit) || 15;
-    const lastId = req.query.lastId;
-    const userId = req.user._id.toString();
-
-    const query = { hashtags: tag };
-    if (lastId) query._id = { $lt: lastId };
-
-    const posts = await Post.find(query)
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .select("-author");
-
-    const postsWithReactions = posts.map((post) => {
-      const obj = post.toObject();
-      const reactions = Array.isArray(obj.reactions) ? obj.reactions : [];
-      const reactionCounts = {};
-      reactions.forEach((r) => {
-        if (r.type) reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1;
-      });
-      const userReactionObj = reactions.find(
-        (r) => r.user && r.user.toString() === userId
-      );
-      return {
-        ...obj,
-        reactions,
-        reactionCounts,
-        totalReactions: reactions.length,
-        authorId: obj.author?.toString(),
-        userReaction: userReactionObj?.type || null,
-        hasReacted: !!userReactionObj,
-        allowReposts: obj.allowReposts !== false,
-      };
-    });
-
-    return res.json({ posts: postsWithReactions, tag, count: postsWithReactions.length });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
@@ -1280,6 +1165,47 @@ exports.toggleAllowReposts = async (req, res) => {
         : "Reposts disabled for this post",
       allowReposts,
     });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+// @route GET /api/posts/:id/comments
+exports.getPostComments = async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id)
+      .select("comments commentCount")
+      .lean();
+    if (!post) return res.status(404).json({ message: "Post not found" });
+
+    const User = require("../models/User");
+    const pseudonyms = new Set();
+    post.comments?.forEach((c) => {
+      if (c.pseudonym) pseudonyms.add(c.pseudonym);
+      (c.replies || []).forEach((r) => { if (r.pseudonym) pseudonyms.add(r.pseudonym); });
+    });
+
+    let authorMap = {};
+    if (pseudonyms.size > 0) {
+      const authors = await User.find({ pseudonym: { $in: Array.from(pseudonyms) } })
+        .select("pseudonym showOnlineStatus isOnline lastSeen")
+        .lean();
+      authors.forEach((a) => { authorMap[a.pseudonym] = a; });
+    }
+
+    const enrich = (c) => ({
+      ...c,
+      showOnlineStatus: authorMap[c.pseudonym]?.showOnlineStatus || false,
+      isOnline:         authorMap[c.pseudonym]?.isOnline || false,
+      lastSeen:         authorMap[c.pseudonym]?.lastSeen || null,
+    });
+
+    const comments = (post.comments || []).map((c) => ({
+      ...enrich(c),
+      replies: (c.replies || []).map(enrich),
+    }));
+
+    return res.json({ comments, commentCount: post.commentCount });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
