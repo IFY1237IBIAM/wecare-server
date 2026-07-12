@@ -1170,6 +1170,55 @@ exports.toggleAllowReposts = async (req, res) => {
   }
 };
 
+
+exports.getPostsByHashtag = async (req, res) => {
+  try {
+    const tag = req.params.tag?.toLowerCase().replace(/^#/, "");
+    if (!tag) return res.status(400).json({ message: "Hashtag is required" });
+
+    const limit  = parseInt(req.query.limit)  || 15;
+    const lastId = req.query.lastId;
+
+    const query = {
+      hashtags: tag,
+      flagged:  { $ne: true },
+    };
+
+    if (lastId) query._id = { $lt: lastId };
+
+    const posts = await Post.find(query)
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean();
+
+    const postsWithReactions = posts.map((post) => {
+      const reactions     = Array.isArray(post.reactions) ? post.reactions : [];
+      const reactionCounts = {};
+      reactions.forEach((r) => {
+        if (r.type) reactionCounts[r.type] = (reactionCounts[r.type] || 0) + 1;
+      });
+      return {
+        ...post,
+        reactions,
+        reactionCounts,
+        totalReactions: reactions.length,
+        authorId:       post.author?.toString(),
+        comments:       [],
+        commentCount:   post.comments?.length || 0,
+      };
+    });
+
+    return res.json({
+      posts: postsWithReactions,
+      hasMore: posts.length === limit,
+      tag,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+
 // @route GET /api/posts/:id/comments
 exports.getPostComments = async (req, res) => {
   try {
