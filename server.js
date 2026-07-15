@@ -162,6 +162,9 @@ app.use("/api/email",         emailRoutes);
 // WEB FALLBACK
 // ─────────────────────────────────────────────────────────────────────────────
 app.use(express.static(path.join(__dirname, "public")));
+app.get("/privacy", (req, res) =>
+  res.sendFile(path.join(__dirname, "public", "privacy.html"))
+);
 app.get("/post/:postId*", (req, res) =>
   res.sendFile(path.join(__dirname, "public", "post", "index.html"))
 );
