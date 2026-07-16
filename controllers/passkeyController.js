@@ -1,6 +1,14 @@
 /**
- * controllers/passkeyController.js — Production Final
- * Fix: biometric fallback no longer sets credentialID (avoids duplicate key on null)
+ * controllers/passkeyController.js — WITH DISCOVERABLE CREDENTIAL SUPPORT
+ *
+ * KEY CHANGE: getAuthenticationOptions now works WITHOUT a pseudonym.
+ * When no pseudonym is provided, it returns empty allowCredentials which
+ * triggers a "discoverable credential" flow — Google Password Manager
+ * automatically shows the user their saved passkeys for this app,
+ * exactly like the Telegram experience.
+ *
+ * verifyAuthentication now resolves the user from the credential ID
+ * in the assertion response when no userId is provided upfront.
  */
 
 const {
@@ -36,30 +44,22 @@ if (process.env.PASSKEY_ORIGINS) {
 }
 
 const generateToken = (id, role, sessionId) =>
-  jwt.sign(
-    {
-      id,
-      role,
-      sessionId,
-    },
-    process.env.JWT_SECRET,
-    {
-      expiresIn: process.env.JWT_EXPIRE,
-    }
-  );
+  jwt.sign({ id, role, sessionId }, process.env.JWT_SECRET, {
+    expiresIn: process.env.JWT_EXPIRE,
+  });
 
 const challengeStore = new Map();
 
-function storeChallenge(userId, challenge) {
-  challengeStore.set(String(userId), {
+function storeChallenge(key, challenge) {
+  challengeStore.set(String(key), {
     challenge,
     expiresAt: Date.now() + 5 * 60 * 1000,
   });
 }
 
-function consumeChallenge(userId) {
-  const entry = challengeStore.get(String(userId));
-  challengeStore.delete(String(userId));
+function consumeChallenge(key) {
+  const entry = challengeStore.get(String(key));
+  challengeStore.delete(String(key));
   if (!entry || Date.now() > entry.expiresAt) return null;
   return entry.challenge;
 }
@@ -71,8 +71,8 @@ exports.getRegistrationOptions = async (req, res) => {
     if (!user) return res.status(404).json({ message: "User not found." });
 
     const existing = await Passkey.find({
-      user: user._id,
-      tier: "webauthn",
+      user:         user._id,
+      tier:         "webauthn",
       credentialID: { $ne: null },
     });
 
@@ -119,7 +119,6 @@ exports.verifyRegistration = async (req, res) => {
       const resolvedDeviceId   = deviceId   || "unknown";
       const resolvedDeviceName = deviceName?.trim() || "Device";
 
-      // Check if this device already has a fallback passkey
       const existingFallback = await Passkey.findOne({
         user:     user._id,
         tier:     "biometric",
@@ -127,36 +126,28 @@ exports.verifyRegistration = async (req, res) => {
       });
 
       let passkey;
-
       if (existingFallback) {
-        // Update existing — don't create duplicate
         existingFallback.deviceName = resolvedDeviceName;
         existingFallback.updatedAt  = new Date();
         await existingFallback.save();
         passkey = existingFallback;
-        console.log(`Passkey updated for user ${user._id} device ${resolvedDeviceId}`);
       } else {
-        // Create new — note: NO credentialID field set for biometric tier
-        // This avoids the unique index duplicate key error on null values
         passkey = await Passkey.create({
           user:       user._id,
           tier:       "biometric",
           deviceId:   resolvedDeviceId,
           deviceName: resolvedDeviceName,
-          // credentialID intentionally omitted — sparse index ignores null
         });
-        console.log(`Passkey created for user ${user._id} device ${resolvedDeviceId}`);
       }
 
       await User.findByIdAndUpdate(user._id, { passkeyEnabled: true });
 
-      // Send email — non-fatal
       sendPasskeyRegisteredEmail({
         to:         user.email,
         pseudonym:  user.pseudonym,
         deviceName: passkey.deviceName,
         createdAt:  passkey.createdAt,
-      }).catch((err) => console.error("Passkey registered email failed (non-fatal):", err));
+      }).catch((err) => console.error("Passkey registered email failed:", err));
 
       return res.status(existingFallback ? 200 : 201).json({
         message:    existingFallback ? "Passkey updated 💜" : "Passkey registered 💜",
@@ -191,7 +182,7 @@ exports.verifyRegistration = async (req, res) => {
       return res.status(400).json({ message: "Passkey verification failed." });
     }
 
-    const { registrationInfo }                                     = verification;
+    const { registrationInfo } = verification;
     const { credential, credentialDeviceType, credentialBackedUp } = registrationInfo;
 
     const passkey = await Passkey.create({
@@ -208,13 +199,12 @@ exports.verifyRegistration = async (req, res) => {
 
     await User.findByIdAndUpdate(user._id, { passkeyEnabled: true });
 
-    // Send email — non-fatal
     sendPasskeyRegisteredEmail({
       to:         user.email,
       pseudonym:  user.pseudonym,
       deviceName: passkey.deviceName,
       createdAt:  passkey.createdAt,
-    }).catch((err) => console.error("Passkey registered email failed (non-fatal):", err));
+    }).catch((err) => console.error("Passkey registered email failed:", err));
 
     return res.status(201).json({
       message:    "Passkey registered 💜",
@@ -231,17 +221,37 @@ exports.verifyRegistration = async (req, res) => {
 };
 
 // ── POST /api/passkey/auth/options ────────────────────────────────────────────
+// UPDATED: now works WITHOUT pseudonym for discoverable credential flow.
+// When no pseudonym is provided → empty allowCredentials → Google Password
+// Manager shows ALL passkeys for this app → user picks their account.
+// When pseudonym IS provided → targeted flow (existing behaviour, unchanged).
 exports.getAuthenticationOptions = async (req, res) => {
   try {
     const { pseudonym } = req.body;
-    if (!pseudonym) return res.status(400).json({ message: "Pseudonym is required." });
 
+    // ── DISCOVERABLE FLOW — no pseudonym provided ─────────────────────────────
+    // Use a temporary challenge key since we don't know the user yet.
+    // The credential ID in the assertion response will identify them.
+    if (!pseudonym) {
+      const tempKey = `discoverable_${Date.now()}_${Math.random()}`;
+      const options = await generateAuthenticationOptions({
+        rpID:             RP_ID,
+        allowCredentials: [],           // ← empty = discoverable, GPM shows all passkeys
+        userVerification: "required",
+        timeout:          60000,
+      });
+      storeChallenge(tempKey, options.challenge);
+      // Return the tempKey so the client can send it back during verify
+      return res.json({ ...options, tempKey, discoverable: true });
+    }
+
+    // ── TARGETED FLOW — pseudonym provided (existing behaviour) ───────────────
     const user = await User.findOne({ pseudonym: pseudonym.trim() });
     if (!user) return res.status(404).json({ message: "No passkey found for this account." });
 
     const webAuthnPasskeys = await Passkey.find({
-      user: user._id,
-      tier: "webauthn",
+      user:         user._id,
+      tier:         "webauthn",
       credentialID: { $ne: null },
     });
     const allPasskeys = await Passkey.find({ user: user._id });
@@ -275,32 +285,53 @@ exports.getAuthenticationOptions = async (req, res) => {
 };
 
 // ── POST /api/passkey/auth/verify ─────────────────────────────────────────────
+// UPDATED: resolves user from credential ID when no userId provided (discoverable flow).
 exports.verifyAuthentication = async (req, res) => {
   try {
-    const { assertionResponse, userId } = req.body;
-    if (!userId || !assertionResponse) {
-      return res.status(400).json({ message: "userId and assertionResponse required." });
+    const { assertionResponse, userId, tempKey } = req.body;
+    if (!assertionResponse) {
+      return res.status(400).json({ message: "assertionResponse is required." });
     }
 
-    const user = await User.findById(userId);
-    if (!user)         return res.status(404).json({ message: "User not found." });
-    if (user.isBanned) return res.status(403).json({ message: "Account suspended." });
-
     const credentialID = assertionResponse.id;
-    const passkey      = await Passkey.findOne({
-      user: user._id,
-      credentialID,
-      tier: "webauthn",
-    });
+
+    // ── Resolve user ──────────────────────────────────────────────────────────
+    let user;
+    let passkey;
+
+    if (userId) {
+      // Targeted flow — userId known upfront
+      user = await User.findById(userId);
+      if (!user) return res.status(404).json({ message: "User not found." });
+      passkey = await Passkey.findOne({
+        user: user._id,
+        credentialID,
+        tier: "webauthn",
+      });
+    } else {
+      // Discoverable flow — find user via credential ID
+      passkey = await Passkey.findOne({ credentialID, tier: "webauthn" });
+      if (!passkey) {
+        return res.status(404).json({ message: "Passkey not found. Please sign in with your password and re-register your passkey." });
+      }
+      user = await User.findById(passkey.user);
+    }
+
     if (!passkey) {
       return res.status(404).json({ message: "Passkey not found. Please re-register." });
     }
+    if (!user)         return res.status(404).json({ message: "User not found." });
+    if (user.isBanned) return res.status(403).json({ message: "Account suspended." });
 
-    const expectedChallenge = consumeChallenge(user._id);
+    // ── Consume challenge ─────────────────────────────────────────────────────
+    // Use tempKey for discoverable flow, userId for targeted flow
+    const challengeKey      = tempKey || userId;
+    const expectedChallenge = consumeChallenge(challengeKey);
     if (!expectedChallenge) {
       return res.status(400).json({ message: "Challenge expired. Please try again." });
     }
 
+    // ── Verify ────────────────────────────────────────────────────────────────
     let verification;
     try {
       verification = await verifyAuthenticationResponse({
@@ -331,23 +362,18 @@ exports.verifyAuthentication = async (req, res) => {
     });
 
     const sessionId = generateSessionId();
+    const token     = generateToken(user._id, user.role, sessionId);
 
-const token = generateToken(
-  user._id,
-  user.role,
-  sessionId
-);
+    await recordLogin({
+      userId:     user._id,
+      sessionId,
+      method:     "passkey",
+      deviceName: req.body.deviceName || "Unknown device",
+      deviceOS:   req.body.deviceOS   || "Unknown OS",
+      ipAddress:  getIpAddress(req),
+    });
 
-await recordLogin({
-  userId: user._id,
-  sessionId,
-  method: "passkey",
-  deviceName: req.body.deviceName || "Unknown device",
-  deviceOS: req.body.deviceOS || "Unknown OS",
-  ipAddress: getIpAddress(req),
-});
-
-return res.json({
+    return res.json({
       message: "Signed in with passkey 💜",
       token,
       user: {
@@ -358,10 +384,10 @@ return res.json({
         role:                user.role,
         isBanned:            user.isBanned,
         confirmedViolations: user.confirmedViolations || 0,
-        violations:          user.violations || [],
-        appealStatus:        user.appealStatus || "none",
+        violations:          user.violations          || [],
+        appealStatus:        user.appealStatus        || "none",
         showOnlineStatus:    user.showOnlineStatus,
-        bio:                 user.bio || "",
+        bio:                 user.bio                 || "",
       },
     });
   } catch (err) {
@@ -400,7 +426,6 @@ exports.deletePasskey = async (req, res) => {
       await User.findByIdAndUpdate(req.user._id, { passkeyEnabled: false });
     }
 
-    // Get user for email — non-fatal
     User.findById(req.user._id)
       .select("email pseudonym")
       .then((user) => {
@@ -409,7 +434,7 @@ exports.deletePasskey = async (req, res) => {
           to:         user.email,
           pseudonym:  user.pseudonym,
           deviceName: deletedName,
-        }).catch((err) => console.error("Passkey deleted email failed (non-fatal):", err));
+        }).catch((err) => console.error("Passkey deleted email failed:", err));
       })
       .catch(() => {});
 

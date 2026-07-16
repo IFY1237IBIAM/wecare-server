@@ -1,5 +1,11 @@
 /**
- * routes/passkeyRoutes.js — WITH RATE LIMITING + INPUT VALIDATION
+ * routes/passkeyRoutes.js — validatePseudonym REMOVED from auth/options
+ *
+ * The discoverable credential flow calls /auth/options with NO pseudonym
+ * at all, so validatePseudonym (which requires it) would incorrectly
+ * block that request. Validation now happens conditionally inside the
+ * controller itself — if pseudonym IS provided, it still gets checked
+ * there via the existing User.findOne() lookup.
  */
 
 const express = require("express");
@@ -12,8 +18,6 @@ const {
   passkeyRegisterLimiter,
 } = require("../middleware/rateLimiters");
 
-const { validatePseudonym } = require("../middleware/validators");
-
 const {
   getRegistrationOptions,
   verifyRegistration,
@@ -24,12 +28,12 @@ const {
 } = require("../controllers/passkeyController");
 
 [
-  ["getRegistrationOptions", getRegistrationOptions],
-  ["verifyRegistration",     verifyRegistration],
+  ["getRegistrationOptions",   getRegistrationOptions],
+  ["verifyRegistration",       verifyRegistration],
   ["getAuthenticationOptions", getAuthenticationOptions],
-  ["verifyAuthentication",   verifyAuthentication],
-  ["listPasskeys",           listPasskeys],
-  ["deletePasskey",          deletePasskey],
+  ["verifyAuthentication",     verifyAuthentication],
+  ["listPasskeys",             listPasskeys],
+  ["deletePasskey",            deletePasskey],
 ].forEach(([name, fn]) => {
   if (typeof fn !== "function") {
     throw new Error(`passkeyController is missing export: "${name}".`);
@@ -40,8 +44,9 @@ const {
 router.get ("/register/options", protect, passkeyRegisterLimiter, getRegistrationOptions);
 router.post("/register/verify",  protect, passkeyRegisterLimiter, verifyRegistration);
 
-// Authentication (no protect — user is signing in) — RATE LIMITED + VALIDATED
-router.post("/auth/options", passkeyAuthOptionsLimiter, validatePseudonym, getAuthenticationOptions);
+// Authentication (no protect — user is signing in)
+// validatePseudonym REMOVED — pseudonym is now optional (discoverable flow)
+router.post("/auth/options", passkeyAuthOptionsLimiter, getAuthenticationOptions);
 router.post("/auth/verify",  passkeyAuthVerifyLimiter,  verifyAuthentication);
 
 // Management
