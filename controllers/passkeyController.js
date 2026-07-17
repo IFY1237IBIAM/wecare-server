@@ -1,14 +1,6 @@
 /**
- * controllers/passkeyController.js — WITH DISCOVERABLE CREDENTIAL SUPPORT
- *
- * KEY CHANGE: getAuthenticationOptions now works WITHOUT a pseudonym.
- * When no pseudonym is provided, it returns empty allowCredentials which
- * triggers a "discoverable credential" flow — Google Password Manager
- * automatically shows the user their saved passkeys for this app,
- * exactly like the Telegram experience.
- *
- * verifyAuthentication now resolves the user from the credential ID
- * in the assertion response when no userId is provided upfront.
+ * controllers/passkeyController.js — FINAL
+ * Discoverable credentials + cross-install device detection
  */
 
 const {
@@ -185,6 +177,9 @@ exports.verifyRegistration = async (req, res) => {
     const { registrationInfo } = verification;
     const { credential, credentialDeviceType, credentialBackedUp } = registrationInfo;
 
+    // deviceId captured here too — enables checkDeviceHasPasskey lookups
+    // BEFORE login, which is what powers "show passkey button after
+    // uninstall+reinstall" detection.
     const passkey = await Passkey.create({
       user:         user._id,
       tier:         "webauthn",
@@ -195,6 +190,7 @@ exports.verifyRegistration = async (req, res) => {
       backedUp:     credentialBackedUp,
       transports:   credential.transports || ["internal"],
       deviceName:   deviceName?.trim() || "Device",
+      deviceId:     deviceId || null,
     });
 
     await User.findByIdAndUpdate(user._id, { passkeyEnabled: true });
@@ -220,32 +216,49 @@ exports.verifyRegistration = async (req, res) => {
   }
 };
 
+// ── GET /api/passkey/check-device?deviceId=xxx ────────────────────────────────
+// Public endpoint — no auth required. Used BEFORE login to decide whether
+// to show the "Sign in with passkey" button. Only reveals a boolean —
+// never which user or any account details. Safe for pre-auth use.
+exports.checkDeviceHasPasskey = async (req, res) => {
+  try {
+    const { deviceId } = req.query;
+    if (!deviceId) {
+      return res.json({ hasPasskey: false });
+    }
+
+    const passkey = await Passkey.findOne({
+      deviceId,
+      tier: "webauthn",
+    }).select("_id");
+
+    return res.json({ hasPasskey: !!passkey });
+  } catch (err) {
+    console.error("checkDeviceHasPasskey error:", err);
+    // Fail closed — if anything goes wrong, just don't show the button
+    return res.json({ hasPasskey: false });
+  }
+};
+
 // ── POST /api/passkey/auth/options ────────────────────────────────────────────
-// UPDATED: now works WITHOUT pseudonym for discoverable credential flow.
-// When no pseudonym is provided → empty allowCredentials → Google Password
-// Manager shows ALL passkeys for this app → user picks their account.
-// When pseudonym IS provided → targeted flow (existing behaviour, unchanged).
 exports.getAuthenticationOptions = async (req, res) => {
   try {
     const { pseudonym } = req.body;
 
     // ── DISCOVERABLE FLOW — no pseudonym provided ─────────────────────────────
-    // Use a temporary challenge key since we don't know the user yet.
-    // The credential ID in the assertion response will identify them.
     if (!pseudonym) {
       const tempKey = `discoverable_${Date.now()}_${Math.random()}`;
       const options = await generateAuthenticationOptions({
         rpID:             RP_ID,
-        allowCredentials: [],           // ← empty = discoverable, GPM shows all passkeys
+        allowCredentials: [],
         userVerification: "required",
         timeout:          60000,
       });
       storeChallenge(tempKey, options.challenge);
-      // Return the tempKey so the client can send it back during verify
       return res.json({ ...options, tempKey, discoverable: true });
     }
 
-    // ── TARGETED FLOW — pseudonym provided (existing behaviour) ───────────────
+    // ── TARGETED FLOW — pseudonym provided ─────────────────────────────────────
     const user = await User.findOne({ pseudonym: pseudonym.trim() });
     if (!user) return res.status(404).json({ message: "No passkey found for this account." });
 
@@ -285,7 +298,6 @@ exports.getAuthenticationOptions = async (req, res) => {
 };
 
 // ── POST /api/passkey/auth/verify ─────────────────────────────────────────────
-// UPDATED: resolves user from credential ID when no userId provided (discoverable flow).
 exports.verifyAuthentication = async (req, res) => {
   try {
     const { assertionResponse, userId, tempKey } = req.body;
@@ -295,12 +307,10 @@ exports.verifyAuthentication = async (req, res) => {
 
     const credentialID = assertionResponse.id;
 
-    // ── Resolve user ──────────────────────────────────────────────────────────
     let user;
     let passkey;
 
     if (userId) {
-      // Targeted flow — userId known upfront
       user = await User.findById(userId);
       if (!user) return res.status(404).json({ message: "User not found." });
       passkey = await Passkey.findOne({
@@ -309,7 +319,6 @@ exports.verifyAuthentication = async (req, res) => {
         tier: "webauthn",
       });
     } else {
-      // Discoverable flow — find user via credential ID
       passkey = await Passkey.findOne({ credentialID, tier: "webauthn" });
       if (!passkey) {
         return res.status(404).json({ message: "Passkey not found. Please sign in with your password and re-register your passkey." });
@@ -323,15 +332,12 @@ exports.verifyAuthentication = async (req, res) => {
     if (!user)         return res.status(404).json({ message: "User not found." });
     if (user.isBanned) return res.status(403).json({ message: "Account suspended." });
 
-    // ── Consume challenge ─────────────────────────────────────────────────────
-    // Use tempKey for discoverable flow, userId for targeted flow
     const challengeKey      = tempKey || userId;
     const expectedChallenge = consumeChallenge(challengeKey);
     if (!expectedChallenge) {
       return res.status(400).json({ message: "Challenge expired. Please try again." });
     }
 
-    // ── Verify ────────────────────────────────────────────────────────────────
     let verification;
     try {
       verification = await verifyAuthenticationResponse({
