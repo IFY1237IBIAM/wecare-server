@@ -151,7 +151,7 @@ app.use("/api/checkin",       require("./routes/checkInRoutes"));
 app.use("/api/groups",        groupLimiter, require("./routes/groupRoutes"));
 app.use("/api/appeals",       require("./routes/appealRoutes"));
 app.use("/api/settings",      require("./routes/settingsRoutes"));
-app.use("/api/passkey",       require("./routes/passkeyRoutes"));
+
 app.use("/api/two-step",      require("./routes/twoStepRoutes"));
 app.use("/api/users",         require("./routes/avatarVibeRoute"));
 app.use("/api/recovery",      require("./routes/accountRecoveryRoutes"));
