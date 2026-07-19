@@ -1,0 +1,569 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Community Guidelines — HushCircle</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: #ffffff;
+      color: #1a1a1a;
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    /* ── Nav ── */
+    .nav {
+      border-bottom: 1px solid #e5e7eb;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .nav-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      text-decoration: none;
+    }
+    .nav-brand {
+      font-size: 17px;
+      font-weight: 700;
+      color: #1a1a1a;
+      letter-spacing: -0.2px;
+    }
+
+    /* ── Hero ── */
+    .hero {
+      padding: 64px 24px 48px;
+      border-bottom: 1px solid #e5e7eb;
+      max-width: 760px;
+      margin: 0 auto;
+    }
+    .hero-eyebrow {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: #7c3aed;
+      margin-bottom: 12px;
+    }
+    .hero h1 {
+      font-size: 40px;
+      font-weight: 800;
+      color: #111827;
+      line-height: 1.2;
+      letter-spacing: -1px;
+      margin-bottom: 16px;
+    }
+    .hero-lead {
+      font-size: 17px;
+      color: #6b7280;
+      max-width: 580px;
+      line-height: 1.7;
+      margin-bottom: 24px;
+    }
+    .meta-row {
+      display: flex;
+      gap: 24px;
+      flex-wrap: wrap;
+    }
+    .meta-item {
+      font-size: 13px;
+      color: #9ca3af;
+    }
+    .meta-item strong {
+      color: #374151;
+      font-weight: 600;
+    }
+
+    /* ── Layout ── */
+    .layout {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 56px 24px 96px;
+    }
+
+    /* ── Table of contents ── */
+    .toc {
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      padding: 24px 28px;
+      margin-bottom: 56px;
+    }
+    .toc-title {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: #9ca3af;
+      margin-bottom: 14px;
+    }
+    .toc ol {
+      list-style: decimal;
+      padding-left: 20px;
+      columns: 2;
+      column-gap: 32px;
+    }
+    .toc li { margin-bottom: 6px; }
+    .toc a {
+      color: #7c3aed;
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 500;
+    }
+    .toc a:hover { text-decoration: underline; }
+
+    /* ── Sections ── */
+    .section {
+      margin-bottom: 56px;
+      scroll-margin-top: 24px;
+    }
+    .section-number {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: #7c3aed;
+      margin-bottom: 6px;
+    }
+    .section h2 {
+      font-size: 24px;
+      font-weight: 700;
+      color: #111827;
+      margin-bottom: 16px;
+      letter-spacing: -0.4px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    .section > p { color: #374151; margin-bottom: 14px; }
+
+    .section-divider {
+      border: none;
+      border-top: 1px solid #e5e7eb;
+      margin-bottom: 56px;
+    }
+
+    /* ── Rule cards ── */
+    .rule {
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      overflow: hidden;
+      margin-bottom: 12px;
+    }
+    .rule-header {
+      background: #f9fafb;
+      border-bottom: 1px solid #e5e7eb;
+      padding: 11px 16px;
+    }
+    .rule-header-text {
+      font-size: 13px;
+      font-weight: 700;
+      color: #374151;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+    .rule-body { padding: 14px 16px; }
+    .rule-body p {
+      color: #374151;
+      font-size: 14px;
+      line-height: 1.65;
+      margin: 0;
+    }
+
+    /* ── Callout ── */
+    .callout {
+      background: #faf5ff;
+      border-left: 3px solid #7c3aed;
+      border-radius: 0 8px 8px 0;
+      padding: 16px 20px;
+      margin-bottom: 16px;
+    }
+    .callout-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #7c3aed;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+    .callout p {
+      color: #374151;
+      font-size: 14px;
+      line-height: 1.65;
+      margin: 0;
+      white-space: pre-line;
+    }
+
+    /* ── Crisis box ── */
+    .crisis-box {
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      border-radius: 10px;
+      padding: 18px 20px;
+      margin-bottom: 16px;
+    }
+    .crisis-box-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #dc2626;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+    .crisis-box p {
+      color: #374151;
+      font-size: 14px;
+      line-height: 1.65;
+      margin: 0;
+      white-space: pre-line;
+    }
+
+    /* ── Enforcement steps ── */
+    .step {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 12px;
+      align-items: flex-start;
+    }
+    .step-num {
+      width: 28px;
+      height: 28px;
+      border-radius: 14px;
+      background: #7c3aed;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+    .step-content { flex: 1; }
+    .step-label {
+      font-size: 14px;
+      font-weight: 700;
+      color: #111827;
+      margin-bottom: 4px;
+    }
+    .step-body {
+      font-size: 14px;
+      color: #374151;
+      line-height: 1.6;
+    }
+
+    a { color: #7c3aed; }
+    a:hover { text-decoration: underline; }
+
+    /* ── Footer ── */
+    .footer {
+      border-top: 1px solid #e5e7eb;
+      padding: 40px 24px;
+      max-width: 760px;
+      margin: 0 auto;
+    }
+    .footer-grid {
+      display: flex;
+      gap: 48px;
+      flex-wrap: wrap;
+      margin-bottom: 32px;
+    }
+    .footer-col h4 {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: #9ca3af;
+      margin-bottom: 10px;
+    }
+    .footer-col p, .footer-col a {
+      font-size: 14px;
+      color: #6b7280;
+      display: block;
+      margin-bottom: 4px;
+      text-decoration: none;
+    }
+    .footer-col a:hover { color: #7c3aed; }
+    .footer-bottom {
+      font-size: 13px;
+      color: #9ca3af;
+      border-top: 1px solid #f3f4f6;
+      padding-top: 20px;
+    }
+
+    @media (max-width: 600px) {
+      .hero h1 { font-size: 28px; }
+      .hero { padding: 40px 20px 32px; }
+      .layout { padding: 40px 20px 64px; }
+      .toc ol { columns: 1; }
+      .footer-grid { gap: 28px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Nav -->
+  <nav class="nav">
+    <a href="/" class="nav-logo">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"
+          fill="rgba(124,58,237,0.2)" stroke="#7c3aed" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span class="nav-brand">HushCircle</span>
+    </a>
+  </nav>
+
+  <!-- Hero -->
+  <div class="hero">
+    <div class="hero-eyebrow">Legal</div>
+    <h1>Community Guidelines</h1>
+    <p class="hero-lead">HushCircle is a safe space for people navigating difficult emotions. These guidelines protect that space — for you, and for everyone here.</p>
+    <div class="meta-row">
+      <div class="meta-item"><strong>Last updated:</strong> January 2025</div>
+      <div class="meta-item"><strong>Applies to:</strong> All users and content</div>
+      <div class="meta-item"><strong>Questions:</strong> <a href="mailto:support@hushcircle.com">support@hushcircle.com</a></div>
+    </div>
+  </div>
+
+  <div class="layout">
+
+    <!-- Table of contents -->
+    <div class="toc">
+      <div class="toc-title">Contents</div>
+      <ol>
+        <li><a href="#promise">Our Core Promise</a></li>
+        <li><a href="#kindness">Be Kind. Always.</a></li>
+        <li><a href="#harassment">Zero Tolerance: Harassment &amp; Bullying</a></li>
+        <li><a href="#crisis">Self-Harm &amp; Crisis Content</a></li>
+        <li><a href="#anonymity">Respect Anonymity &amp; Privacy</a></li>
+        <li><a href="#spam">No Spam or Self-Promotion</a></li>
+        <li><a href="#circles">Circles (Group Spaces)</a></li>
+        <li><a href="#enforcement">Enforcement &amp; Violations</a></li>
+        <li><a href="#reporting">Reporting Content</a></li>
+      </ol>
+    </div>
+
+    <!-- Section 1 -->
+    <div class="section" id="promise">
+      <div class="section-number">Section 1</div>
+      <h2>Our Core Promise</h2>
+      <p>HushCircle was built on one fundamental belief: every person deserves a place to be heard without judgment. Whether you are grieving a loss, managing anxiety, processing heartbreak, or simply carrying the weight of a hard day — you belong here.</p>
+      <p>Our platform is anonymous by design. You share what you feel comfortable sharing — nothing more, nothing less. Your real name, location, workplace, and personal identity are never required, never asked, and never stored.</p>
+      <p>In return, we ask that you actively help protect this space by reading, understanding, and following the guidelines below. This is a shared responsibility. No moderation system is perfect — but a community that genuinely cares for one another is.</p>
+      <div class="callout">
+        <div class="callout-title">Remember</div>
+        <p>Behind every post is a real human being in a real moment of vulnerability. Read everything with that in mind.</p>
+      </div>
+    </div>
+
+    <hr class="section-divider" />
+
+    <!-- Section 2 -->
+    <div class="section" id="kindness">
+      <div class="section-number">Section 2</div>
+      <h2>Be Kind. Always.</h2>
+      <p>Kindness is not optional on HushCircle — it is the foundation. Every person here is going through something. Even if you cannot see their pain, it is real. Treat every post and comment as if it came from someone you genuinely love, because for someone else, it might.</p>
+
+      <div class="rule">
+        <div class="rule-header"><span class="rule-header-text">What kindness looks like here</span></div>
+        <div class="rule-body"><p>Offering support even when you disagree with someone's choices. Using "I feel" statements rather than "you should." Acknowledging someone's experience before offering advice. Celebrating small wins with the same energy you would give to big ones.</p></div>
+      </div>
+
+      <div class="rule">
+        <div class="rule-header"><span class="rule-header-text">What we do not allow</span></div>
+        <div class="rule-body"><p>Dismissive comments like "just get over it" or "others have it worse." Unsolicited opinions on someone's lifestyle or decisions. Comparisons that minimize someone's suffering. Tone-policing someone who is in distress.</p></div>
+      </div>
+
+      <p>If you are having a hard day and find it difficult to be kind, it is okay to step back and simply read rather than post. Taking care of yourself is also part of taking care of this community.</p>
+    </div>
+
+    <hr class="section-divider" />
+
+    <!-- Section 3 -->
+    <div class="section" id="harassment">
+      <div class="section-number">Section 3</div>
+      <h2>Zero Tolerance: Harassment &amp; Bullying</h2>
+      <p>Any form of targeted harassment, intimidation, or bullying results in immediate account suspension — no warnings, no second chances. HushCircle is categorically not a place for cruelty. This applies to posts, comments, direct messages, and Circle chats equally.</p>
+
+      <div class="rule">
+        <div class="rule-header"><span class="rule-header-text">Prohibited behavior</span></div>
+        <div class="rule-body"><p>Personal attacks on someone's character, appearance, or identity. Repeatedly targeting the same user across multiple posts or contexts. Coordinating with others to mock or pile on a specific person. Threatening to expose, embarrass, or harm someone. Using alternative accounts to harass after being suspended.</p></div>
+      </div>
+
+      <p>If you experience harassment, tap the Report button on the offending post or comment immediately. Do not engage or retaliate — this can complicate the review process. Our team reviews all harassment reports within 24 hours, with priority review for threats.</p>
+      <p>You can also block a user directly from any post. Blocked users cannot see your posts, comment on your content, or send you messages. Blocking is immediate and silent.</p>
+    </div>
+
+    <hr class="section-divider" />
+
+    <!-- Section 4 -->
+    <div class="section" id="crisis">
+      <div class="section-number">Section 4</div>
+      <h2>Self-Harm &amp; Crisis Content</h2>
+      <p>This is our most critical guideline. HushCircle is a peer support community — not a clinical crisis service. While we deeply care about the wellbeing of every member, we are not a substitute for professional mental health care, emergency services, or trained crisis counselors.</p>
+
+      <div class="rule">
+        <div class="rule-header"><span class="rule-header-text">Content we never allow</span></div>
+        <div class="rule-body"><p>Any content that encourages, glorifies, romanticizes, or provides instructions for self-harm or suicide. Specific details about methods, dosages, locations, or plans. Content explicitly designed to trigger or escalate another person's mental health crisis. "Challenges" or trends that normalize dangerous behavior.</p></div>
+      </div>
+
+      <div class="rule">
+        <div class="rule-header"><span class="rule-header-text">Content we actively support</span></div>
+        <div class="rule-body"><p>Sharing your struggles honestly, including dark feelings. Expressing hopelessness while seeking connection and support. Discussing mental health as a topic openly, critically, and safely. Sharing recovery journeys — both the wins and the setbacks.</p></div>
+      </div>
+
+      <p>Our platform uses automated content moderation that scans for crisis signals in real time. If your post is flagged, you will be shown crisis resources and given the option to connect with support. This is not punishment — it is care. The flag does not automatically delete your post or report you to anyone.</p>
+
+      <div class="crisis-box">
+        <div class="crisis-box-title">If you are in crisis right now</div>
+        <p>Suicide &amp; Crisis Lifeline: Call or text 988 (US)
+Crisis Text Line: Text HOME to 741741
+International resources: iasp.info/resources/Crisis_Centres
+Emergency services: 911 or your local equivalent
+
+You are not alone. Please reach out.</p>
+      </div>
+    </div>
+
+    <hr class="section-divider" />
+
+    <!-- Section 5 -->
+    <div class="section" id="anonymity">
+      <div class="section-number">Section 5</div>
+      <h2>Respect Anonymity &amp; Privacy</h2>
+      <p>Anonymity is what makes HushCircle work. Many of our members share things here they cannot share anywhere else — in their families, friendships, or workplaces. They do this because they trust that their identity is protected. Protecting that trust is a collective responsibility.</p>
+
+      <div class="rule">
+        <div class="rule-header"><span class="rule-header-text">Strictly prohibited</span></div>
+        <div class="rule-body"><p>Attempting to identify or expose another user's real name, location, employer, or any personal details. Sharing screenshots of posts or comments outside the app without explicit consent. Asking another user for identifying information — phone number, social media handles, or location. Correlating a user's HushCircle pseudonym with their presence on other platforms.</p></div>
+      </div>
+
+      <p>Violations of this rule are treated with the utmost seriousness. Doxxing — the act of researching and publicly exposing private information about someone — results in permanent suspension and, where applicable, referral to law enforcement.</p>
+      <p>This rule also applies to your own information. We encourage you not to share personally identifying details in your posts. You can always share your experience without revealing who you are.</p>
+    </div>
+
+    <hr class="section-divider" />
+
+    <!-- Section 6 -->
+    <div class="section" id="spam">
+      <div class="section-number">Section 6</div>
+      <h2>No Spam or Self-Promotion</h2>
+      <p>The HushCircle feed is a curated space for authentic emotional sharing. It is not a marketing channel, a promotional platform, or a place for content that serves interests other than genuine peer support.</p>
+
+      <div class="rule">
+        <div class="rule-header"><span class="rule-header-text">Prohibited content</span></div>
+        <div class="rule-body"><p>Advertisements, promotional links, or affiliate marketing. Repetitive or copy-pasted posts. Fake or coordinated accounts designed to manipulate the feed or inflate engagement. AI-generated content presented as genuine personal experience. Recruitment for external groups, apps, or services. Unsolicited links to external websites or social media profiles.</p></div>
+      </div>
+
+      <p>If you run a legitimate mental health resource, support group, or service and want to be present on HushCircle, please contact us at <a href="mailto:support@hushcircle.com">support@hushcircle.com</a> to discuss partnership options.</p>
+    </div>
+
+    <hr class="section-divider" />
+
+    <!-- Section 7 -->
+    <div class="section" id="circles">
+      <div class="section-number">Section 7</div>
+      <h2>Circles (Group Spaces)</h2>
+      <p>Circles are moderated group spaces organized around shared experiences — grief, anxiety, chronic illness, recovery, and more. Each Circle is guided by a Circle Keeper, a trusted community member who helps maintain the safety and tone of that space.</p>
+
+      <div class="rule">
+        <div class="rule-header"><span class="rule-header-text">Circle member expectations</span></div>
+        <div class="rule-body"><p>Follow all community guidelines within circle spaces. Respect the Circle Keeper's guidance and decisions. Support fellow members and contribute meaningfully to the space.</p></div>
+      </div>
+
+      <div class="rule">
+        <div class="rule-header"><span class="rule-header-text">Circle Keeper authority</span></div>
+        <div class="rule-body"><p>Mute or remove members who repeatedly violate guidelines. Temporarily close a Circle if the environment becomes unsafe. Pin crisis resources for members who need immediate support. Escalate serious violations to the HushCircle moderation team.</p></div>
+      </div>
+
+      <p>Circle Keepers are volunteers, not professional moderators. Please be patient with them. If you believe a Circle Keeper has acted unfairly, you can appeal directly to our team at <a href="mailto:support@hushcircle.com">support@hushcircle.com</a>.</p>
+    </div>
+
+    <hr class="section-divider" />
+
+    <!-- Section 8 -->
+    <div class="section" id="enforcement">
+      <div class="section-number">Section 8</div>
+      <h2>Enforcement &amp; Violations</h2>
+      <p>We believe in proportional enforcement. Not every mistake warrants the same response, and our system is designed to educate first, escalate when necessary. Here is how violations are handled:</p>
+
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-content">
+          <div class="step-label">First violation</div>
+          <div class="step-body">The offending post or comment is removed. You receive an in-app notification explaining what was removed, which guideline it violated, and why. Your violation count increments to 1 of 3.</div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-content">
+          <div class="step-label">Second violation</div>
+          <div class="step-body">Post removed. Notification sent. Violation count at 2 of 3. You receive a clear warning: one more violation will result in a temporary account suspension.</div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-content">
+          <div class="step-label">Third violation</div>
+          <div class="step-body">Post removed. Account suspended. You may submit an appeal through the app immediately. Appeals are reviewed within 48 hours by a human moderator — not an automated system. Approved appeals restore your account. Denied appeals include an explanation.</div>
+        </div>
+      </div>
+
+      <div class="rule" style="margin-top: 20px;">
+        <div class="rule-header"><span class="rule-header-text">Immediate suspension — no warnings</span></div>
+        <div class="rule-body"><p>Doxxing or revealing someone's private information. Sharing content that encourages or instructs self-harm or suicide. Coordinated harassment or brigading. Operating fake or bot accounts. Threatening violence or harm against any person.</p></div>
+      </div>
+
+      <p>Suspension lengths vary by severity: 7 days for first suspensions, 30 days for second, permanent for third or for immediate-suspension offenses. Permanent bans are reviewed by a senior moderator before being finalized.</p>
+    </div>
+
+    <hr class="section-divider" />
+
+    <!-- Section 9 -->
+    <div class="section" id="reporting">
+      <div class="section-number">Section 9</div>
+      <h2>Reporting Content</h2>
+      <p>Reporting is one of the most powerful things you can do to keep HushCircle safe. When you see something that violates these guidelines, please report it. Do not engage with it, argue with it, or call it out publicly — simply report and move on.</p>
+      <p>Posts flagged by 3 or more users are automatically elevated for priority review. All reports are reviewed by a human moderator — we do not rely solely on automated systems for final decisions.</p>
+      <p>Misusing the report system to target users you personally dislike — when no guideline has been violated — is itself a violation. False reporting is taken seriously and will result in enforcement action against the reporter.</p>
+    </div>
+
+  </div>
+
+  <!-- Footer -->
+  <div class="footer">
+    <div class="footer-grid">
+      <div class="footer-col">
+        <h4>Contact</h4>
+        <a href="mailto:support@hushcircle.com">support@hushcircle.com</a>
+        <a href="mailto:privacy@hushcircle.com">privacy@hushcircle.com</a>
+        <a href="mailto:security@hushcircle.com">security@hushcircle.com</a>
+      </div>
+      <div class="footer-col">
+        <h4>Legal</h4>
+        <a href="/terms">Terms of Service</a>
+        <a href="/privacy">Privacy Policy</a>
+        <a href="/guidelines">Community Guidelines</a>
+      </div>
+      <div class="footer-col">
+        <h4>Company</h4>
+        <p>HushCircle</p>
+        <p>support@hushcircle.com</p>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      &copy; 2025 HushCircle. These guidelines are reviewed and updated regularly. Continued use of HushCircle constitutes acceptance of the current version.
+    </div>
+  </div>
+
+</body>
+</html>

@@ -163,6 +163,9 @@ app.use("/api/email",         emailRoutes);
 // ─────────────────────────────────────────────────────────────────────────────
 app.use(express.static(path.join(__dirname, "public")));
 app.get("/privacy", (req, res) =>
+  res.sendFile(path.join(__dirname, "public", "guidelines.html"))
+);
+app.get("/privacy", (req, res) =>
   res.sendFile(path.join(__dirname, "public", "privacy.html"))
 );
 app.get("/post/:postId*", (req, res) =>
