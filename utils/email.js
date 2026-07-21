@@ -77,9 +77,23 @@ function emailShell({ title, preheader, bodyHtml }) {
 
           <tr>
             <td align="center" style="padding-bottom:32px;">
-              <div style="font-size:48px;line-height:1;">&#x1F49C;</div>
-              <div style="font-size:28px;font-weight:700;color:#EDE8F5;letter-spacing:1px;margin-top:8px;">HushCircle</div>
-              <div style="font-size:13px;color:#8B7FA8;margin-top:4px;">A safe space for your heart</div>
+              
+              <img
+                src="https://hushcircle.org/assets/adaptive-icon.png"
+                alt="HushCircle"
+                width="72"
+                height="72"
+                style="display:block;margin:0 auto 16px;border-radius:16px;"
+              />
+
+              <div style="font-size:28px;font-weight:700;color:#EDE8F5;letter-spacing:1px;">
+                HushCircle
+              </div>
+
+              <div style="font-size:13px;color:#8B7FA8;margin-top:4px;">
+                A safe space for your heart
+              </div>
+
             </td>
           </tr>
 
@@ -108,7 +122,6 @@ function emailShell({ title, preheader, bodyHtml }) {
 </body>
 </html>`;
 }
-
 // ─── Shared Components ────────────────────────────────────────────────────────
 
 function ctaButton(href, label) {
