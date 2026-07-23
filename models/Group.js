@@ -61,6 +61,16 @@ const groupSchema = new mongoose.Schema(
       of:   String,
       default: {},
     },
+
+    // ── Per-user "cleared chat" checkpoint ───────────────────────────────
+    // Key   = userId string
+    // Value = Date — posts created at or before this date are hidden from
+    //         that user only (everyone else still sees them normally).
+    clearedAt: {
+      type: Map,
+      of:   Date,
+      default: {},
+    },
   },
   { timestamps: true }
 );
@@ -81,6 +91,11 @@ groupSchema.methods.getMuteInfo = function (userId) {
     this.mutedMembers.find((m) => m.user.toString() === userId.toString()) ||
     null
   );
+};
+
+// ── Helper: get this user's "cleared chat" checkpoint ────────────────────
+groupSchema.methods.getClearedAt = function (userId) {
+  return this.clearedAt?.get(userId.toString()) || null;
 };
 
 module.exports = mongoose.models.Group || mongoose.model("Group", groupSchema);

@@ -220,6 +220,13 @@ router.post("/leave/:groupId", protect, async (req, res) => {
       group.markModified("lastReadAt");
     }
 
+    // ── Also clear this user's "cleared chat" checkpoint so a future
+    //    rejoin doesn't silently hide old messages for them ────────────
+    if (group.clearedAt) {
+      group.clearedAt.delete(userId);
+      group.markModified("clearedAt");
+    }
+
     group.rejoinBlock = (group.rejoinBlock || []).filter(
       (b) => b.user.toString() !== userId
     );
@@ -262,6 +269,28 @@ router.post("/:groupId/mark-read", protect, requireMember, async (req, res) => {
     return res.json({
       message:       "Marked as read",
       totalMessages: group.totalMessages || 0,
+    });
+  } catch (e) {
+    return res.status(500).json({ message: e.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/groups/:groupId/clear-chat — clear chat from MY view only
+// ─────────────────────────────────────────────────────────────────────────────
+router.post("/:groupId/clear-chat", protect, requireMember, async (req, res) => {
+  try {
+    const group = req.group;
+    const userId = req.user._id.toString();
+
+    if (!group.clearedAt) group.clearedAt = new Map();
+    group.clearedAt.set(userId, new Date());
+    group.markModified("clearedAt");
+    await group.save({ validateBeforeSave: false });
+
+    return res.json({
+      message:   "Chat cleared",
+      clearedAt: group.clearedAt.get(userId),
     });
   } catch (e) {
     return res.status(500).json({ message: e.message });
@@ -313,6 +342,12 @@ router.get("/:groupId/posts", protect, requireMember, async (req, res) => {
     const firstId = req.query.firstId;
     const query   = { group: req.params.groupId };
     if (firstId) query._id = { $lt: firstId };
+
+    // ── Hide anything at/before this user's "cleared chat" checkpoint ────
+    const clearedAt = req.group.getClearedAt(req.user._id);
+    if (clearedAt) {
+      query.createdAt = { ...(query.createdAt || {}), $gt: clearedAt };
+    }
 
     const posts = await GroupPost.find(query)
       .sort({ createdAt: firstId ? -1 : 1 })
